@@ -1,0 +1,101 @@
+# yii3-idempotency
+
+## Install
+
+```bash
+composer require rasuvaeff/yii3-idempotency
+```
+
+## Rules
+
+- PSR-15 middleware: implements `MiddlewareInterface`
+- Key format: 1-255 chars, `[A-Za-z0-9._-]+`
+- Fingerprint: `sha256(method + "\n" + path + "\n" + body)`
+- Replay: same key + same fingerprint => cached response, handler NOT called
+- Conflict: same key + different fingerprint => 409
+- Policy: `PassThrough` (skip without key) or `Reject` (400 without key)
+- TTL: records expire after configured seconds
+- Storage: `IdempotencyStorage` interface (claim, load, store)
+
+## API
+
+### IdempotencyKey
+
+```php
+$key = new IdempotencyKey('req-123-abc');
+$key->value; // 'req-123-abc'
+$key->equals($other); // bool
+```
+
+### IdempotencyFingerprint
+
+```php
+$fp = IdempotencyFingerprint::fromRequest($request);
+$fp->hash; // sha256 hex string (64 chars)
+$fp->equals($other); // bool
+```
+
+### IdempotencyPolicy
+
+```php
+enum IdempotencyPolicy {
+    case PassThrough; // no key => pass through
+    case Reject;      // no key => 400
+}
+```
+
+### HeaderIdempotencyKeyExtractor
+
+```php
+$extractor = new HeaderIdempotencyKeyExtractor('Idempotency-Key');
+$key = $extractor->extract($request); // IdempotencyKey or null
+```
+
+### IdempotencyStorage (interface)
+
+```php
+interface IdempotencyStorage {
+    public function load(IdempotencyKey $key): ?IdempotencyRecord;
+    public function claim(IdempotencyKey $key, IdempotencyFingerprint $fp): bool;
+    public function store(IdempotencyRecord $record): void;
+}
+```
+
+### InMemoryIdempotencyStorage
+
+```php
+$storage = new InMemoryIdempotencyStorage($clock);
+```
+
+### IdempotencyMiddleware
+
+```php
+$middleware = new IdempotencyMiddleware(
+    keyExtractor: $extractor,
+    storage: $storage,
+    responseFactory: $responseFactory, // PSR-17
+    clock: $clock,                     // PSR-20
+    policy: IdempotencyPolicy::PassThrough,
+    ttlSeconds: 3600,
+);
+```
+
+### IdempotencyRecord
+
+```php
+$record = IdempotencyRecord::create($key, $fingerprint, $response, $clock, 3600);
+$record->isExpired($clock); // bool
+```
+
+## Config (Yii3 config-plugin)
+
+```php
+// config/params.php
+return [
+    'rasuvaeff/yii3-idempotency' => [
+        'headerName' => 'Idempotency-Key',
+        'policy' => 'pass_through',
+        'ttlSeconds' => 3600,
+    ],
+];
+```
