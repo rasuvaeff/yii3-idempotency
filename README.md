@@ -86,6 +86,10 @@ return [
 - Atomic claim prevents race conditions (in persistent storage adapters)
 - TTL prevents indefinite storage
 
+## Examples
+
+See [`examples/`](examples/) for runnable scripts.
+
 ## Development
 
 ```bash
