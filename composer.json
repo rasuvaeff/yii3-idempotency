@@ -1,6 +1,13 @@
 {
     "name": "rasuvaeff/yii3-idempotency",
     "description": "Idempotency key middleware for Yii3 APIs",
+    "keywords": [
+        "api",
+        "deduplication",
+        "idempotency",
+        "middleware",
+        "yii3"
+    ],
     "license": "BSD-3-Clause",
     "type": "library",
     "authors": [
