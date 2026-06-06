@@ -96,7 +96,15 @@ See [`examples/`](examples/) for runnable scripts.
 ```bash
 make install
 make build
+make cs-fix
+make test
+make test-coverage
+make mutation
+make release-check
 ```
+
+`make test-coverage` and `make mutation` bootstrap `pcov` inside the
+`composer:2` container because the base image has no coverage driver.
 
 ## License
 
