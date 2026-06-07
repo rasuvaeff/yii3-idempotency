@@ -1,6 +1,8 @@
 {
     "name": "rasuvaeff/yii3-idempotency",
     "description": "Idempotency key middleware for Yii3 APIs",
+    "license": "BSD-3-Clause",
+    "type": "library",
     "keywords": [
         "api",
         "deduplication",
@@ -8,8 +10,6 @@
         "middleware",
         "yii3"
     ],
-    "license": "BSD-3-Clause",
-    "type": "library",
     "authors": [
         {
             "name": "Victor Razuvaev",
@@ -35,7 +35,6 @@
         "infection/infection": "^0.29",
         "maglnet/composer-require-checker": "^4.17",
         "phpunit/phpunit": "^11.5",
-        "psalm/plugin-phpunit": "^0.19",
         "rector/rector": "^2.4",
         "roave/backward-compatibility-check": "^8.0",
         "vimeo/psalm": "^6.16"
