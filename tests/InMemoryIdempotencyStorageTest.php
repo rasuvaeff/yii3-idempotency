@@ -49,14 +49,14 @@ final class InMemoryIdempotencyStorageTest extends TestCase
     }
 
     #[Test]
-    public function claimReturnsTrueForSameFingerprint(): void
+    public function claimReturnsFalseForRepeatedClaim(): void
     {
         $key = new IdempotencyKey('key-1');
         $fp = $this->createFingerprint('hash-1');
 
         $this->storage->claim($key, $fp);
 
-        $this->assertTrue($this->storage->claim($key, $fp));
+        $this->assertFalse($this->storage->claim($key, $fp));
     }
 
     #[Test]
@@ -94,6 +94,18 @@ final class InMemoryIdempotencyStorageTest extends TestCase
         $this->clock->advance(60);
 
         $this->assertNull($this->storage->load($key));
+    }
+
+    #[Test]
+    public function releaseAllowsClaimAgain(): void
+    {
+        $key = new IdempotencyKey('key-1');
+        $fp = $this->createFingerprint('hash-1');
+
+        $this->storage->claim($key, $fp);
+        $this->storage->release($key);
+
+        $this->assertTrue($this->storage->claim($key, $fp));
     }
 
     private function createFingerprint(string $hash): \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint

@@ -2,7 +2,7 @@
 
 | Script | Shows | Needs server? |
 |---|---|---|
-| `basic.php` | Basic idempotency middleware usage | No |
+| `basic.php` | Basic package bootstrap usage | No |
 
 Run with Docker:
 

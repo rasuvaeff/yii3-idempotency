@@ -16,6 +16,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 final class IdempotencyMiddleware implements MiddlewareInterface
 {
+    private const int MIN_TTL_SECONDS = 1;
+
     public function __construct(
         private readonly IdempotencyKeyExtractor $keyExtractor,
         private readonly IdempotencyStorage $storage,
@@ -23,7 +25,11 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         private readonly ClockInterface $clock,
         private readonly IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
         private readonly int $ttlSeconds = 3600,
-    ) {}
+    ) {
+        if ($ttlSeconds < self::MIN_TTL_SECONDS) {
+            throw new \InvalidArgumentException('TTL seconds must be greater than 0');
+        }
+    }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -53,17 +59,23 @@ final class IdempotencyMiddleware implements MiddlewareInterface
             return $this->conflictResponse();
         }
 
-        $response = $handler->handle($request);
+        try {
+            $response = $handler->handle($request);
 
-        $record = IdempotencyRecord::create(
-            key: $key,
-            fingerprint: $fingerprint,
-            response: $this->captureResponse($response),
-            clock: $this->clock,
-            ttlSeconds: $this->ttlSeconds,
-        );
+            $record = IdempotencyRecord::create(
+                key: $key,
+                fingerprint: $fingerprint,
+                response: $this->captureResponse($response),
+                clock: $this->clock,
+                ttlSeconds: $this->ttlSeconds,
+            );
 
-        $this->storage->store($record);
+            $this->storage->store($record);
+        } catch (\Throwable $throwable) {
+            $this->storage->release($key);
+
+            throw $throwable;
+        }
 
         return $response;
     }

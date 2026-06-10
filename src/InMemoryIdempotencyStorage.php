@@ -14,7 +14,7 @@ final class InMemoryIdempotencyStorage implements IdempotencyStorage
     /** @var array<string, IdempotencyRecord> */
     private array $records = [];
 
-    /** @var array<string, string> */
+    /** @var array<string, true> */
     private array $claims = [];
 
     public function __construct(
@@ -42,20 +42,24 @@ final class InMemoryIdempotencyStorage implements IdempotencyStorage
     #[\Override]
     public function claim(IdempotencyKey $key, IdempotencyFingerprint $fingerprint): bool
     {
-        $existing = $this->claims[$key->value] ?? null;
-
-        if ($existing === null) {
-            $this->claims[$key->value] = $fingerprint->hash;
-
-            return true;
+        if (isset($this->claims[$key->value])) {
+            return false;
         }
 
-        return $existing === $fingerprint->hash;
+        $this->claims[$key->value] = true;
+
+        return true;
     }
 
     #[\Override]
     public function store(IdempotencyRecord $record): void
     {
         $this->records[$record->key->value] = $record;
+    }
+
+    #[\Override]
+    public function release(IdempotencyKey $key): void
+    {
+        unset($this->claims[$key->value]);
     }
 }

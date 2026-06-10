@@ -76,7 +76,7 @@ return [
 | `IdempotencyFingerprint` | Request fingerprint (method + path + body hash) |
 | `IdempotencyRecord` | Stored record with TTL |
 | `IdempotencyResponse` | Captured response (status, headers, body) |
-| `IdempotencyStorage` | Interface: load, claim, store |
+| `IdempotencyStorage` | Interface: load, claim, store, release |
 | `InMemoryIdempotencyStorage` | In-memory implementation (for testing) |
 | `HeaderIdempotencyKeyExtractor` | Extracts key from request header |
 | `IdempotencyPolicy` | Enum: `PassThrough`, `Reject` |

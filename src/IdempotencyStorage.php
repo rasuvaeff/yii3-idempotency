@@ -14,4 +14,6 @@ interface IdempotencyStorage
     public function claim(IdempotencyKey $key, IdempotencyFingerprint $fingerprint): bool;
 
     public function store(IdempotencyRecord $record): void;
+
+    public function release(IdempotencyKey $key): void;
 }

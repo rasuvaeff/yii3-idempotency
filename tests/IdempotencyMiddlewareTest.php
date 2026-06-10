@@ -306,4 +306,27 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->assertNotNull($record);
         $this->assertSame(201, $record->response->statusCode);
     }
+
+    #[Test]
+    public function releasesClaimWhenHandlerThrows(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $throwingHandler = new FakeHandler(
+            throwable: new \RuntimeException('boom'),
+        );
+
+        try {
+            $this->middleware->process($request, $throwingHandler);
+            $this->fail('Expected RuntimeException to be thrown');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('boom', $exception->getMessage());
+        }
+
+        $response = $this->middleware->process($request, new FakeHandler());
+
+        $this->assertSame(200, $response->getStatusCode());
+    }
 }

@@ -58,6 +58,7 @@ interface IdempotencyStorage {
     public function load(IdempotencyKey $key): ?IdempotencyRecord;
     public function claim(IdempotencyKey $key, IdempotencyFingerprint $fp): bool;
     public function store(IdempotencyRecord $record): void;
+    public function release(IdempotencyKey $key): void;
 }
 ```
 

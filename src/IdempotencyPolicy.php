@@ -11,4 +11,15 @@ enum IdempotencyPolicy
 {
     case PassThrough;
     case Reject;
+
+    public static function fromConfigValue(string $value): self
+    {
+        return match (strtolower($value)) {
+            'pass_through', 'passthrough' => self::PassThrough,
+            'reject' => self::Reject,
+            default => throw new \InvalidArgumentException(
+                sprintf('Invalid idempotency policy "%s"', $value),
+            ),
+        };
+    }
 }
