@@ -21,10 +21,18 @@ final readonly class IdempotencyFingerprint
     public static function fromRequest(ServerRequestInterface $request): self
     {
         $method = $request->getMethod();
-        $path = $request->getUri()->getPath();
-        $body = (string) $request->getBody();
+        $uri = $request->getUri();
+        $stream = $request->getBody();
+        $body = (string) $stream;
 
-        return new self(hash('sha256', $method . "\n" . $path . "\n" . $body));
+        if ($stream->isSeekable()) {
+            $stream->rewind();
+        }
+
+        return new self(hash(
+            'sha256',
+            $method . "\n" . $uri->getPath() . "\n" . $uri->getQuery() . "\n" . $body,
+        ));
     }
 
     public function equals(self $other): bool

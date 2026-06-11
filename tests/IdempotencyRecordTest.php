@@ -69,6 +69,46 @@ final class IdempotencyRecordTest extends TestCase
         $this->assertTrue($record->isExpired($clock));
     }
 
+    #[Test]
+    public function restoresWithExplicitExpiry(): void
+    {
+        $key = new IdempotencyKey('test-key');
+        $fingerprint = new \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint('hash123');
+        $response = new IdempotencyResponse(200, [], 'body');
+        $expiresAt = new \DateTimeImmutable('2025-01-01 02:30:00+00:00');
+
+        $record = IdempotencyRecord::restore(
+            key: $key,
+            fingerprint: $fingerprint,
+            response: $response,
+            expiresAt: $expiresAt,
+        );
+
+        $this->assertSame($key, $record->key);
+        $this->assertSame($fingerprint, $record->fingerprint);
+        $this->assertSame($response, $record->response);
+        $this->assertSame($expiresAt, $record->expiresAt);
+    }
+
+    #[Test]
+    public function restoredRecordRespectsExpiry(): void
+    {
+        $clock = new FakeClock();
+
+        $record = IdempotencyRecord::restore(
+            key: new IdempotencyKey('test-key'),
+            fingerprint: new \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint('hash'),
+            response: new IdempotencyResponse(200, [], 'body'),
+            expiresAt: $clock->now()->modify('+600 seconds'),
+        );
+
+        $this->assertFalse($record->isExpired($clock));
+
+        $clock->advance(600);
+
+        $this->assertTrue($record->isExpired($clock));
+    }
+
     private function createRecord(FakeClock $clock, int $ttlSeconds = 3600): IdempotencyRecord
     {
         return IdempotencyRecord::create(

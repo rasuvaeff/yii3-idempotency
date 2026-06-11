@@ -115,7 +115,7 @@ final class IdempotencyMiddlewareTest extends TestCase
     }
 
     #[Test]
-    public function differentPayloadWithSameKeyReturnsConflict(): void
+    public function differentPayloadWithSameKeyReturnsUnprocessable(): void
     {
         $request1 = new FakeRequest(
             method: 'POST',
@@ -134,7 +134,7 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request1, $handler);
         $response = $this->middleware->process($request2, $handler);
 
-        $this->assertSame(409, $response->getStatusCode());
+        $this->assertSame(422, $response->getStatusCode());
     }
 
     #[Test]
@@ -187,7 +187,7 @@ final class IdempotencyMiddlewareTest extends TestCase
     }
 
     #[Test]
-    public function conflictResponseContainsJsonBody(): void
+    public function payloadMismatchResponseContainsJsonBody(): void
     {
         $request1 = new FakeRequest(
             method: 'POST',
@@ -205,7 +205,7 @@ final class IdempotencyMiddlewareTest extends TestCase
         $response = $this->middleware->process($request2, $handler);
 
         $this->assertSame('application/json', $response->getHeaderLine('Content-Type'));
-        $this->assertStringContainsString('Conflict', (string) $response->getBody());
+        $this->assertStringContainsString('Unprocessable', (string) $response->getBody());
     }
 
     #[Test]
@@ -305,6 +305,98 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $this->assertNotNull($record);
         $this->assertSame(201, $record->response->statusCode);
+    }
+
+    #[Test]
+    public function claimedKeyReturnsConflictWhileInFlight(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            new \Rasuvaeff\Yii3Idempotency\IdempotencyKey('key-1'),
+            \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $handler = new FakeHandler();
+        $response = $this->middleware->process($request, $handler);
+
+        $this->assertSame(409, $response->getStatusCode());
+        $this->assertSame(0, $handler->getCallCount());
+        $this->assertStringContainsString('currently being processed', (string) $response->getBody());
+    }
+
+    #[Test]
+    public function serverErrorResponseIsNotStored(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $handler = new FakeHandler(responseStatus: 500);
+
+        $response = $this->middleware->process($request, $handler);
+
+        $this->assertSame(500, $response->getStatusCode());
+        $this->assertNull($this->storage->load(new \Rasuvaeff\Yii3Idempotency\IdempotencyKey('key-1')));
+
+        $retry = $this->middleware->process($request, new FakeHandler(responseStatus: 201));
+
+        $this->assertSame(201, $retry->getStatusCode());
+        $this->assertSame(1, $handler->getCallCount());
+    }
+
+    #[Test]
+    public function requestBodyRemainsReadableAfterFingerprinting(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"name":"John"}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $seenBody = '';
+        $handler = new class ($seenBody) implements \Psr\Http\Server\RequestHandlerInterface {
+            public function __construct(private string &$seenBody) {}
+
+            #[\Override]
+            public function handle(\Psr\Http\Message\ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                $this->seenBody = $request->getBody()->getContents();
+
+                return new FakeResponse(200);
+            }
+        };
+
+        $this->middleware->process($request, $handler);
+
+        $this->assertSame('{"name":"John"}', $seenBody);
+    }
+
+    #[Test]
+    public function sameKeyDifferentQueryReturnsUnprocessable(): void
+    {
+        $request1 = new FakeRequest(
+            method: 'POST',
+            path: '/orders',
+            query: 'retry=1',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $request2 = new FakeRequest(
+            method: 'POST',
+            path: '/orders',
+            query: 'retry=2',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $handler = new FakeHandler();
+
+        $this->middleware->process($request1, $handler);
+        $response = $this->middleware->process($request2, $handler);
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertSame(1, $handler->getCallCount());
     }
 
     #[Test]

@@ -33,6 +33,20 @@ final readonly class IdempotencyRecord
         );
     }
 
+    public static function restore(
+        IdempotencyKey $key,
+        IdempotencyFingerprint $fingerprint,
+        IdempotencyResponse $response,
+        \DateTimeImmutable $expiresAt,
+    ): self {
+        return new self(
+            key: $key,
+            fingerprint: $fingerprint,
+            response: $response,
+            expiresAt: $expiresAt,
+        );
+    }
+
     public function isExpired(ClockInterface $clock): bool
     {
         return $clock->now() >= $this->expiresAt;

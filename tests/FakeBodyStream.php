@@ -11,12 +11,16 @@ use Psr\Http\Message\StreamInterface;
  */
 final class FakeBodyStream implements StreamInterface
 {
+    private int $position = 0;
+
     public function __construct(
         private readonly string $data = '',
     ) {}
 
     public function __toString(): string
     {
+        $this->position = strlen($this->data);
+
         return $this->data;
     }
 
@@ -38,13 +42,13 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function tell(): int
     {
-        return 0;
+        return $this->position;
     }
 
     #[\Override]
     public function eof(): bool
     {
-        return true;
+        return $this->position >= strlen($this->data);
     }
 
     #[\Override]
@@ -54,10 +58,16 @@ final class FakeBodyStream implements StreamInterface
     }
 
     #[\Override]
-    public function seek(int $offset, int $whence = SEEK_SET): void {}
+    public function seek(int $offset, int $whence = SEEK_SET): void
+    {
+        $this->position = $offset;
+    }
 
     #[\Override]
-    public function rewind(): void {}
+    public function rewind(): void
+    {
+        $this->position = 0;
+    }
 
     #[\Override]
     public function isWritable(): bool
@@ -80,13 +90,19 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function read(int $length): string
     {
-        return '';
+        $chunk = substr($this->data, $this->position, $length);
+        $this->position += strlen($chunk);
+
+        return $chunk;
     }
 
     #[\Override]
     public function getContents(): string
     {
-        return $this->data;
+        $contents = substr($this->data, $this->position);
+        $this->position = strlen($this->data);
+
+        return $contents;
     }
 
     #[\Override]

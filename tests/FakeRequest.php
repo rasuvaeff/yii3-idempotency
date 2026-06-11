@@ -13,6 +13,8 @@ use Psr\Http\Message\UriInterface;
  */
 final class FakeRequest implements ServerRequestInterface
 {
+    private ?FakeBodyStream $bodyStream = null;
+
     /**
      * @param array<string, mixed> $serverParams
      * @param array<string, string|int|list<string>> $queryParams
@@ -21,6 +23,7 @@ final class FakeRequest implements ServerRequestInterface
     public function __construct(
         private readonly string $method = 'POST',
         private readonly string $path = '/',
+        private readonly string $query = '',
         private readonly string $body = '',
         private readonly array $headers = [],
         private readonly array $serverParams = [],
@@ -36,13 +39,13 @@ final class FakeRequest implements ServerRequestInterface
     #[\Override]
     public function getUri(): UriInterface
     {
-        return new FakeUri($this->path);
+        return new FakeUri(path: $this->path, query: $this->query);
     }
 
     #[\Override]
     public function getBody(): StreamInterface
     {
-        return new FakeBodyStream($this->body);
+        return $this->bodyStream ??= new FakeBodyStream($this->body);
     }
 
     #[\Override]

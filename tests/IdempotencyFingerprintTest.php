@@ -79,10 +79,29 @@ final class IdempotencyFingerprintTest extends TestCase
             body: '{"data":1}',
         );
 
-        $expected = hash('sha256', "POST\n/api/test\n{\"data\":1}");
+        $expected = hash('sha256', "POST\n/api/test\n\n{\"data\":1}");
         $fp = IdempotencyFingerprint::fromRequest($request);
 
         $this->assertSame($expected, $fp->hash);
+    }
+
+    #[Test]
+    public function differentQueryProducesDifferentFingerprint(): void
+    {
+        $a = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/orders', query: 'retry=1'));
+        $b = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/orders', query: 'retry=2'));
+
+        $this->assertFalse($a->equals($b));
+    }
+
+    #[Test]
+    public function rewindsSeekableBodyAfterReading(): void
+    {
+        $request = new FakeRequest(body: '{"name":"John"}');
+
+        IdempotencyFingerprint::fromRequest($request);
+
+        $this->assertSame('{"name":"John"}', $request->getBody()->getContents());
     }
 
     #[Test]

@@ -53,7 +53,12 @@ make release-check
 ## Invariants & gotchas
 
 - `IdempotencyKey` validates: 1-255 chars, pattern `/^[A-Za-z0-9._-]+$/`.
-- Fingerprint: `sha256(method + "\n" + path + "\n" + body)`.
+- Fingerprint: `sha256(method + "\n" + path + "\n" + query + "\n" + body)`; the body
+  stream is rewound after reading (when seekable).
+- Conflict semantics: 422 for payload mismatch, 409 for an in-flight duplicate.
+- 5xx handler responses are never stored; the claim is released instead.
+- `IdempotencyRecord::restore()` is the rehydration path for storage adapters —
+  do not remove it, external backends depend on it.
 - `IdempotencyRecord` uses PSR-20 `ClockInterface` for TTL.
 - `captureHeaders` iterates `getHeaders()` (returns `array<string, list<string>>`).
 - `replayResponse` restores headers from captured response.

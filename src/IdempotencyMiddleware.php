@@ -18,6 +18,8 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 {
     private const int MIN_TTL_SECONDS = 1;
 
+    private const int MIN_SERVER_ERROR_STATUS = 500;
+
     public function __construct(
         private readonly IdempotencyKeyExtractor $keyExtractor,
         private readonly IdempotencyStorage $storage,
@@ -49,18 +51,24 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         if ($existing !== null) {
             if (!$existing->fingerprint->equals($fingerprint)) {
-                return $this->conflictResponse();
+                return $this->payloadMismatchResponse();
             }
 
             return $this->replayResponse($existing->response);
         }
 
         if (!$this->storage->claim($key, $fingerprint)) {
-            return $this->conflictResponse();
+            return $this->inProgressResponse();
         }
 
         try {
             $response = $handler->handle($request);
+
+            if ($response->getStatusCode() >= self::MIN_SERVER_ERROR_STATUS) {
+                $this->storage->release($key);
+
+                return $response;
+            }
 
             $record = IdempotencyRecord::create(
                 key: $key,
@@ -80,11 +88,27 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         return $response;
     }
 
-    private function conflictResponse(): ResponseInterface
+    private function payloadMismatchResponse(): ResponseInterface
     {
-        $response = $this->responseFactory->createResponse(409);
+        return $this->jsonErrorResponse(
+            statusCode: 422,
+            body: '{"error":"Unprocessable Content","message":"Idempotency key already used with different payload"}',
+        );
+    }
+
+    private function inProgressResponse(): ResponseInterface
+    {
+        return $this->jsonErrorResponse(
+            statusCode: 409,
+            body: '{"error":"Conflict","message":"Request with this idempotency key is currently being processed"}',
+        );
+    }
+
+    private function jsonErrorResponse(int $statusCode, string $body): ResponseInterface
+    {
+        $response = $this->responseFactory->createResponse($statusCode);
         $response = $response->withHeader(name: 'Content-Type', value: 'application/json');
-        $response->getBody()->write('{"error":"Conflict","message":"Idempotency key already used with different payload"}');
+        $response->getBody()->write($body);
 
         return $response;
     }
@@ -120,10 +144,17 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
     private function captureResponse(ResponseInterface $response): IdempotencyResponse
     {
+        $stream = $response->getBody();
+        $body = (string) $stream;
+
+        if ($stream->isSeekable()) {
+            $stream->rewind();
+        }
+
         return new IdempotencyResponse(
             statusCode: $response->getStatusCode(),
             headers: $this->captureHeaders($response),
-            body: (string) $response->getBody(),
+            body: $body,
         );
     }
 }

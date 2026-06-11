@@ -10,9 +10,11 @@ composer require rasuvaeff/yii3-idempotency
 
 - PSR-15 middleware: implements `MiddlewareInterface`
 - Key format: 1-255 chars, `[A-Za-z0-9._-]+`
-- Fingerprint: `sha256(method + "\n" + path + "\n" + body)`
+- Fingerprint: `sha256(method + "\n" + path + "\n" + query + "\n" + body)`
 - Replay: same key + same fingerprint => cached response, handler NOT called
-- Conflict: same key + different fingerprint => 409
+- Payload mismatch: same key + different fingerprint => 422
+- In-flight duplicate: claim already taken => 409
+- 5xx handler responses are NOT stored (claim released, retry allowed)
 - Policy: `PassThrough` (skip without key) or `Reject` (400 without key)
 - TTL: records expire after configured seconds
 - Storage: `IdempotencyStorage` interface (claim, load, store)
@@ -51,6 +53,14 @@ $extractor = new HeaderIdempotencyKeyExtractor('Idempotency-Key');
 $key = $extractor->extract($request); // IdempotencyKey or null
 ```
 
+### IdempotencyKeyExtractor (interface)
+
+```php
+interface IdempotencyKeyExtractor {
+    public function extract(ServerRequestInterface $request): ?IdempotencyKey;
+}
+```
+
 ### IdempotencyStorage (interface)
 
 ```php
@@ -85,6 +95,7 @@ $middleware = new IdempotencyMiddleware(
 
 ```php
 $record = IdempotencyRecord::create($key, $fingerprint, $response, $clock, 3600);
+$record = IdempotencyRecord::restore($key, $fingerprint, $response, $expiresAt); // rehydrate from storage
 $record->isExpired($clock); // bool
 ```
 

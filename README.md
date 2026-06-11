@@ -51,7 +51,9 @@ $middleware = new IdempotencyMiddleware(
 | No idempotency key, `Reject` policy | 400 Bad Request |
 | First request with key | Handler processes, response stored |
 | Same key + same payload | Stored response replayed (handler not called) |
-| Same key + different payload | 409 Conflict |
+| Same key + different payload | 422 Unprocessable Content |
+| Same key while first request is still processing | 409 Conflict |
+| Handler responds with 5xx | Response NOT stored — client may retry with the same key |
 | Expired record | Request processed as new |
 
 ### Configuration
@@ -73,17 +75,20 @@ return [
 |---|---|
 | `IdempotencyMiddleware` | PSR-15 middleware |
 | `IdempotencyKey` | Validated key value object (1-255 chars, `[A-Za-z0-9._-]+`) |
-| `IdempotencyFingerprint` | Request fingerprint (method + path + body hash) |
+| `IdempotencyFingerprint` | Request fingerprint (method + path + query + body hash) |
 | `IdempotencyRecord` | Stored record with TTL |
 | `IdempotencyResponse` | Captured response (status, headers, body) |
 | `IdempotencyStorage` | Interface: load, claim, store, release |
+| `IdempotencyKeyExtractor` | Interface for key extraction strategies |
 | `InMemoryIdempotencyStorage` | In-memory implementation (for testing) |
 | `HeaderIdempotencyKeyExtractor` | Extracts key from request header |
 | `IdempotencyPolicy` | Enum: `PassThrough`, `Reject` |
 
 ## Security
 
-- Fingerprint includes method, path, and body — prevents payload substitution
+- Fingerprint includes method, path, query string, and body — prevents payload substitution
+- Request body stream is rewound after fingerprinting — handlers can re-read it
+- 5xx responses are never stored, so a server failure cannot be replayed for the whole TTL
 - Atomic claim prevents race conditions (in persistent storage adapters)
 - TTL prevents indefinite storage
 

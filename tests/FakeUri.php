@@ -13,6 +13,7 @@ final class FakeUri implements UriInterface
 {
     public function __construct(
         private readonly string $path = '/',
+        private readonly string $query = '',
     ) {}
 
     #[\Override]
@@ -54,7 +55,7 @@ final class FakeUri implements UriInterface
     #[\Override]
     public function getQuery(): string
     {
-        return '';
+        return $this->query;
     }
 
     #[\Override]
