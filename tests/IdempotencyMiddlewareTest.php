@@ -46,6 +46,35 @@ final class IdempotencyMiddlewareTest extends TestCase
     }
 
     #[Test]
+    public function rejectsNonPositiveTtl(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            ttlSeconds: 0,
+        );
+    }
+
+    #[Test]
+    public function allowsTtlOfOne(): void
+    {
+        // 1 is valid (`< 1`, not `<= 1`): must not throw.
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            ttlSeconds: 1,
+        );
+
+        $this->assertInstanceOf(MiddlewareInterface::class, $middleware);
+    }
+
+    #[Test]
     public function passesThroughWhenNoKeyAndPolicyPassThrough(): void
     {
         $request = new FakeRequest();

@@ -86,6 +86,18 @@ final class IdempotencyFingerprintTest extends TestCase
     }
 
     #[Test]
+    public function producesExpectedHashFromAllFourParts(): void
+    {
+        // Method, path, query and body are all distinct, so any swapped/dropped
+        // concat operand changes the digest.
+        $request = new FakeRequest(method: 'PUT', path: '/orders/7', query: 'a=1&b=2', body: '{"x":1}');
+
+        $expected = hash('sha256', "PUT\n/orders/7\na=1&b=2\n{\"x\":1}");
+
+        $this->assertSame($expected, IdempotencyFingerprint::fromRequest($request)->hash);
+    }
+
+    #[Test]
     public function differentQueryProducesDifferentFingerprint(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/orders', query: 'retry=1'));
