@@ -56,7 +56,12 @@ make release-check
 - Fingerprint: `sha256(method + "\n" + path + "\n" + query + "\n" + body)`; the body
   stream is rewound after reading (when seekable).
 - Conflict semantics: 422 for payload mismatch, 409 for an in-flight duplicate.
-- 5xx handler responses are never stored; the claim is released instead.
+- Only 2xx handler responses are cached; any non-2xx (3xx/4xx — incl. retryable
+  409/423/429 — and 5xx) releases the claim instead, so transient failures stay
+  retryable under the same key.
+- Idempotency applies only to the configured `methods` (default POST/PUT/PATCH,
+  normalized to upper-case); other methods pass through before any key/claim work.
+  Configurable via the `methods` constructor arg / `methods` param.
 - `IdempotencyRecord::restore()` is the rehydration path for storage adapters —
   do not remove it, external backends depend on it.
 - `IdempotencyRecord` uses PSR-20 `ClockInterface` for TTL.

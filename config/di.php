@@ -33,5 +33,6 @@ return [
             $params['rasuvaeff/yii3-idempotency']['policy'] ?? 'pass_through',
         ),
         ttlSeconds: (int) ($params['rasuvaeff/yii3-idempotency']['ttlSeconds'] ?? 3600),
+        methods: $params['rasuvaeff/yii3-idempotency']['methods'] ?? ['POST', 'PUT', 'PATCH'],
     ),
 ];

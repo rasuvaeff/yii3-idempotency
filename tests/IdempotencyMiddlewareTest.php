@@ -182,6 +182,78 @@ final class IdempotencyMiddlewareTest extends TestCase
     }
 
     #[Test]
+    public function nonMutatingMethodPassesThroughEvenWithKey(): void
+    {
+        $request = new FakeRequest(method: 'GET', path: '/api/users', headers: ['idempotency-key' => ['k']]);
+        $handler = new FakeHandler(responseStatus: 200, responseBody: 'fresh');
+
+        $this->middleware->process($request, $handler);
+        $this->middleware->process($request, $handler);
+
+        // GET is not guarded: the handler runs every time, nothing is claimed or replayed.
+        $this->assertSame(2, $handler->getCallCount());
+    }
+
+    #[Test]
+    public function honoursACustomMethodSet(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            methods: ['delete'],
+        );
+        $request = new FakeRequest(method: 'DELETE', path: '/api/users/1', headers: ['idempotency-key' => ['k']]);
+        $handler = new FakeHandler(responseStatus: 200, responseBody: 'gone');
+
+        $middleware->process($request, $handler);
+        $middleware->process($request, $handler);
+
+        // DELETE is now guarded and case-insensitive: the second call replays.
+        $this->assertSame(1, $handler->getCallCount());
+    }
+
+    #[Test]
+    public function nonSuccessResponseIsNotCachedAndReleasesTheClaim(): void
+    {
+        $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
+        $handler = new FakeHandler(responseStatus: 409, responseBody: 'locked');
+
+        $first = $this->middleware->process($request, $handler);
+        $second = $this->middleware->process($request, $handler);
+
+        $this->assertSame(409, $first->getStatusCode());
+        $this->assertSame(409, $second->getStatusCode());
+        // Not cached AND claim released: the handler runs again (not a replay, not a 409 in-progress).
+        $this->assertSame(2, $handler->getCallCount());
+    }
+
+    #[Test]
+    public function cachesSuccessAtTheLowerBoundary(): void
+    {
+        $request = new FakeRequest(method: 'POST', path: '/p', body: '{}', headers: ['idempotency-key' => ['k']]);
+        $handler = new FakeHandler(responseStatus: 200, responseBody: 'ok');
+
+        $this->middleware->process($request, $handler);
+        $this->middleware->process($request, $handler);
+
+        $this->assertSame(1, $handler->getCallCount()); // 200 is cached (status >= 200)
+    }
+
+    #[Test]
+    public function doesNotCacheRedirectAtTheUpperBoundary(): void
+    {
+        $request = new FakeRequest(method: 'POST', path: '/p', body: '{}', headers: ['idempotency-key' => ['k']]);
+        $handler = new FakeHandler(responseStatus: 300, responseBody: 'redirect');
+
+        $this->middleware->process($request, $handler);
+        $this->middleware->process($request, $handler);
+
+        $this->assertSame(2, $handler->getCallCount()); // 300 is NOT cached (status >= 300)
+    }
+
+    #[Test]
     public function differentPayloadWithSameKeyReturnsUnprocessable(): void
     {
         $request1 = new FakeRequest(

@@ -7,5 +7,6 @@ return [
         'headerName' => 'Idempotency-Key',
         'policy' => 'pass_through',
         'ttlSeconds' => 3600,
+        'methods' => ['POST', 'PUT', 'PATCH'],
     ],
 ];

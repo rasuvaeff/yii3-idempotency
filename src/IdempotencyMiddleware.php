@@ -18,8 +18,18 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 {
     private const int MIN_TTL_SECONDS = 1;
 
-    private const int MIN_SERVER_ERROR_STATUS = 500;
+    private const int SUCCESS_STATUS_MIN = 200;
 
+    private const int SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
+
+    /**
+     * @var list<string>
+     */
+    private readonly array $methods;
+
+    /**
+     * @param list<string> $methods HTTP methods idempotency applies to; others pass through untouched
+     */
     public function __construct(
         private readonly IdempotencyKeyExtractor $keyExtractor,
         private readonly IdempotencyStorage $storage,
@@ -27,15 +37,22 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         private readonly ClockInterface $clock,
         private readonly IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
         private readonly int $ttlSeconds = 3600,
+        array $methods = ['POST', 'PUT', 'PATCH'],
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
             throw new \InvalidArgumentException('TTL seconds must be greater than 0');
         }
+
+        $this->methods = array_map(strtoupper(...), $methods);
     }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        if (!\in_array(strtoupper($request->getMethod()), $this->methods, true)) {
+            return $handler->handle($request);
+        }
+
         $key = $this->keyExtractor->extract($request);
 
         if ($key === null) {
@@ -64,7 +81,12 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         try {
             $response = $handler->handle($request);
 
-            if ($response->getStatusCode() >= self::MIN_SERVER_ERROR_STATUS) {
+            $status = $response->getStatusCode();
+
+            // Only successful (2xx) responses are cached. Anything else — redirects,
+            // client errors (incl. retryable 409/423/429), server errors — releases
+            // the claim so the request can be retried under the same key.
+            if ($status < self::SUCCESS_STATUS_MIN || $status >= self::SUCCESS_STATUS_MAX_EXCLUSIVE) {
                 $this->storage->release($key);
 
                 return $response;

@@ -14,7 +14,8 @@ composer require rasuvaeff/yii3-idempotency
 - Replay: same key + same fingerprint => cached response, handler NOT called
 - Payload mismatch: same key + different fingerprint => 422
 - In-flight duplicate: claim already taken => 409
-- 5xx handler responses are NOT stored (claim released, retry allowed)
+- Only 2xx handler responses are cached; non-2xx (3xx/4xx incl. retryable 409/423/429, and any 5xx) release the claim and stay retryable
+- Idempotency applies only to configured `methods` (default POST/PUT/PATCH, case-insensitive); other methods pass through untouched
 - Policy: `PassThrough` (skip without key) or `Reject` (400 without key)
 - TTL: records expire after configured seconds
 - Storage: `IdempotencyStorage` interface (claim, load, store)

@@ -53,7 +53,8 @@ $middleware = new IdempotencyMiddleware(
 | Same key + same payload | Stored response replayed (handler not called) |
 | Same key + different payload | 422 Unprocessable Content |
 | Same key while first request is still processing | 409 Conflict |
-| Handler responds with 5xx | Response NOT stored — client may retry with the same key |
+| Non-2xx handler response (3xx/4xx/5xx) | Response NOT stored — claim released, client may retry with the same key |
+| Non-configured method (e.g. `GET`, `DELETE`) | Passes through untouched — idempotency applies only to `methods` (default POST/PUT/PATCH) |
 | Expired record | Request processed as new |
 
 ### Configuration
@@ -65,6 +66,7 @@ return [
         'headerName' => 'Idempotency-Key',
         'policy' => 'pass_through', // or 'reject'
         'ttlSeconds' => 3600,
+        'methods' => ['POST', 'PUT', 'PATCH'], // methods idempotency applies to
     ],
 ];
 ```
@@ -88,7 +90,8 @@ return [
 
 - Fingerprint includes method, path, query string, and body — prevents payload substitution
 - Request body stream is rewound after fingerprinting — handlers can re-read it
-- 5xx responses are never stored, so a server failure cannot be replayed for the whole TTL
+- Only 2xx responses are cached; non-2xx (incl. retryable 409/423/429 and any 5xx) release the claim, so a transient failure cannot be replayed for the whole TTL
+- Idempotency applies only to the configured `methods` (default POST/PUT/PATCH) — safe methods pass through
 - Atomic claim prevents race conditions (in persistent storage adapters)
 - TTL prevents indefinite storage
 
