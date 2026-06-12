@@ -109,6 +109,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         $response = $this->responseFactory->createResponse($statusCode);
         $response = $response->withHeader(name: 'Content-Type', value: 'application/json');
         $response->getBody()->write($body);
+        $response->getBody()->rewind();
 
         return $response;
     }
@@ -122,6 +123,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         }
 
         $response->getBody()->write($captured->body);
+        $response->getBody()->rewind();
 
         return $response;
     }

@@ -144,6 +144,44 @@ final class IdempotencyMiddlewareTest extends TestCase
     }
 
     #[Test]
+    public function replayedResponseBodyIsReadableFromTheCurrentPosition(): void
+    {
+        // getContents() reads from the current cursor; a missing rewind() after
+        // write() would leave it at the end and return an empty body.
+        $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
+        $this->middleware->process($request, new FakeHandler(responseStatus: 201, responseBody: '{"id":7}'));
+
+        $replayed = $this->middleware->process($request, new FakeHandler(responseStatus: 201, responseBody: '{"id":7}'));
+
+        $this->assertSame('{"id":7}', $replayed->getBody()->getContents());
+    }
+
+    #[Test]
+    public function errorResponseBodyIsReadableFromTheCurrentPosition(): void
+    {
+        $first = new FakeRequest(method: 'POST', path: '/api/users', body: '{"a":1}', headers: ['idempotency-key' => ['k']]);
+        $conflicting = new FakeRequest(method: 'POST', path: '/api/users', body: '{"a":2}', headers: ['idempotency-key' => ['k']]);
+        $this->middleware->process($first, new FakeHandler());
+
+        $response = $this->middleware->process($conflicting, new FakeHandler());
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertStringContainsString('Unprocessable', $response->getBody()->getContents());
+    }
+
+    #[Test]
+    public function firstResponseBodyIsRewoundAfterCapture(): void
+    {
+        // captureResponse() reads the handler body then rewinds it, so the body
+        // returned to the client is still readable from the start.
+        $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
+
+        $response = $this->middleware->process($request, new FakeHandler(responseStatus: 200, responseBody: '{"ok":true}'));
+
+        $this->assertSame('{"ok":true}', $response->getBody()->getContents());
+    }
+
+    #[Test]
     public function differentPayloadWithSameKeyReturnsUnprocessable(): void
     {
         $request1 = new FakeRequest(
