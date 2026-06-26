@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests\Integration;
 
-use PHPUnit\Framework\Attributes\CoversNothing;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
@@ -14,6 +11,9 @@ use Rasuvaeff\Yii3Idempotency\IdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeClock;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeResponseFactory;
+use Testo\Assert;
+use Testo\Codecov\CoversNothing;
+use Testo\Test;
 
 /**
  * Exercises the package `config/di.php`, which is covered by neither cs, psalm,
@@ -21,31 +21,29 @@ use Rasuvaeff\Yii3Idempotency\Tests\FakeResponseFactory;
  * key — that belongs to exactly one backend package (yiisoft/config rejects
  * duplicate keys across vendor packages).
  */
+#[Test]
 #[CoversNothing]
-final class ConfigWiringTest extends TestCase
+final class ConfigWiringTest
 {
-    #[Test]
     public function bindsExtractorAliasAndMiddlewareOnly(): void
     {
         $definitions = $this->loadDi([]);
 
-        $this->assertSame(
+        Assert::same(
+            array_keys($definitions),
             [
                 HeaderIdempotencyKeyExtractor::class,
                 IdempotencyKeyExtractor::class,
                 IdempotencyMiddleware::class,
             ],
-            array_keys($definitions),
         );
     }
 
-    #[Test]
     public function doesNotBindSwappableStorageKey(): void
     {
-        $this->assertArrayNotHasKey(IdempotencyStorage::class, $this->loadDi([]));
+        Assert::array($this->loadDi([]))->doesNotHaveKeys(IdempotencyStorage::class);
     }
 
-    #[Test]
     public function middlewareFactoryBuildsMiddleware(): void
     {
         $definitions = $this->loadDi([
@@ -57,7 +55,7 @@ final class ConfigWiringTest extends TestCase
         ]);
 
         $factory = $definitions[IdempotencyMiddleware::class];
-        $this->assertIsCallable($factory);
+        Assert::true(is_callable($factory));
 
         $clock = new FakeClock();
         $middleware = $factory(
@@ -67,15 +65,14 @@ final class ConfigWiringTest extends TestCase
             $clock,
         );
 
-        $this->assertInstanceOf(IdempotencyMiddleware::class, $middleware);
+        Assert::instanceOf($middleware, IdempotencyMiddleware::class);
     }
 
-    #[Test]
     public function middlewareFactoryUsesDefaultsWhenParamsAbsent(): void
     {
         $definitions = $this->loadDi([]);
         $factory = $definitions[IdempotencyMiddleware::class];
-        $this->assertIsCallable($factory);
+        Assert::true(is_callable($factory));
 
         $clock = new FakeClock();
         $middleware = $factory(
@@ -85,7 +82,7 @@ final class ConfigWiringTest extends TestCase
             $clock,
         );
 
-        $this->assertInstanceOf(IdempotencyMiddleware::class, $middleware);
+        Assert::instanceOf($middleware, IdempotencyMiddleware::class);
     }
 
     /**

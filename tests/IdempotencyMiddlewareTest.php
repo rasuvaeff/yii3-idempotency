@@ -4,17 +4,20 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Psr\Http\Server\MiddlewareInterface;
 use Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor;
+use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\IdempotencyPolicy;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Lifecycle\BeforeTest;
+use Testo\Test;
 
-#[CoversClass(IdempotencyMiddleware::class)]
-final class IdempotencyMiddlewareTest extends TestCase
+#[Test]
+#[Covers(IdempotencyMiddleware::class)]
+final class IdempotencyMiddlewareTest
 {
     private FakeClock $clock;
 
@@ -24,8 +27,8 @@ final class IdempotencyMiddlewareTest extends TestCase
 
     private IdempotencyMiddleware $middleware;
 
-    #[\Override]
-    protected function setUp(): void
+    #[BeforeTest]
+    public function setUp(): void
     {
         $this->clock = new FakeClock();
         $this->storage = new InMemoryIdempotencyStorage($this->clock);
@@ -39,30 +42,29 @@ final class IdempotencyMiddlewareTest extends TestCase
         );
     }
 
-    #[Test]
     public function implementsMiddlewareInterface(): void
     {
-        $this->assertInstanceOf(MiddlewareInterface::class, $this->middleware);
+        Assert::instanceOf($this->middleware, MiddlewareInterface::class);
     }
 
-    #[Test]
     public function rejectsNonPositiveTtl(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-
-        new IdempotencyMiddleware(
-            keyExtractor: $this->extractor,
-            storage: $this->storage,
-            responseFactory: new FakeResponseFactory(),
-            clock: $this->clock,
-            ttlSeconds: 0,
-        );
+        try {
+            new IdempotencyMiddleware(
+                keyExtractor: $this->extractor,
+                storage: $this->storage,
+                responseFactory: new FakeResponseFactory(),
+                clock: $this->clock,
+                ttlSeconds: 0,
+            );
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            Assert::true(true);
+        }
     }
 
-    #[Test]
     public function allowsTtlOfOne(): void
     {
-        // 1 is valid (`< 1`, not `<= 1`): must not throw.
         $middleware = new IdempotencyMiddleware(
             keyExtractor: $this->extractor,
             storage: $this->storage,
@@ -71,10 +73,9 @@ final class IdempotencyMiddlewareTest extends TestCase
             ttlSeconds: 1,
         );
 
-        $this->assertInstanceOf(MiddlewareInterface::class, $middleware);
+        Assert::instanceOf($middleware, MiddlewareInterface::class);
     }
 
-    #[Test]
     public function passesThroughWhenNoKeyAndPolicyPassThrough(): void
     {
         $request = new FakeRequest();
@@ -82,11 +83,10 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(200, $response->getStatusCode());
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 200);
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function rejectsWhenNoKeyAndPolicyReject(): void
     {
         $middleware = new IdempotencyMiddleware(
@@ -102,11 +102,10 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $middleware->process($request, $handler);
 
-        $this->assertSame(400, $response->getStatusCode());
-        $this->assertSame(0, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 400);
+        Assert::same($handler->getCallCount(), 0);
     }
 
-    #[Test]
     public function firstRequestPassesThrough(): void
     {
         $request = new FakeRequest(
@@ -119,11 +118,10 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(200, $response->getStatusCode());
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 200);
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function replayReturnsCachedResponse(): void
     {
         $request = new FakeRequest(
@@ -138,25 +136,21 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(201, $response->getStatusCode());
-        $this->assertSame(1, $handler->getCallCount());
-        $this->assertStringContainsString('{"id":1}', (string) $response->getBody());
+        Assert::same($response->getStatusCode(), 201);
+        Assert::same($handler->getCallCount(), 1);
+        Assert::string((string) $response->getBody())->contains('{"id":1}');
     }
 
-    #[Test]
     public function replayedResponseBodyIsReadableFromTheCurrentPosition(): void
     {
-        // getContents() reads from the current cursor; a missing rewind() after
-        // write() would leave it at the end and return an empty body.
         $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
         $this->middleware->process($request, new FakeHandler(responseStatus: 201, responseBody: '{"id":7}'));
 
         $replayed = $this->middleware->process($request, new FakeHandler(responseStatus: 201, responseBody: '{"id":7}'));
 
-        $this->assertSame('{"id":7}', $replayed->getBody()->getContents());
+        Assert::same($replayed->getBody()->getContents(), '{"id":7}');
     }
 
-    #[Test]
     public function errorResponseBodyIsReadableFromTheCurrentPosition(): void
     {
         $first = new FakeRequest(method: 'POST', path: '/api/users', body: '{"a":1}', headers: ['idempotency-key' => ['k']]);
@@ -165,23 +159,19 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($conflicting, new FakeHandler());
 
-        $this->assertSame(422, $response->getStatusCode());
-        $this->assertStringContainsString('Unprocessable', $response->getBody()->getContents());
+        Assert::same($response->getStatusCode(), 422);
+        Assert::string($response->getBody()->getContents())->contains('Unprocessable');
     }
 
-    #[Test]
     public function firstResponseBodyIsRewoundAfterCapture(): void
     {
-        // captureResponse() reads the handler body then rewinds it, so the body
-        // returned to the client is still readable from the start.
         $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
 
         $response = $this->middleware->process($request, new FakeHandler(responseStatus: 200, responseBody: '{"ok":true}'));
 
-        $this->assertSame('{"ok":true}', $response->getBody()->getContents());
+        Assert::same($response->getBody()->getContents(), '{"ok":true}');
     }
 
-    #[Test]
     public function nonMutatingMethodPassesThroughEvenWithKey(): void
     {
         $request = new FakeRequest(method: 'GET', path: '/api/users', headers: ['idempotency-key' => ['k']]);
@@ -190,11 +180,9 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request, $handler);
         $this->middleware->process($request, $handler);
 
-        // GET is not guarded: the handler runs every time, nothing is claimed or replayed.
-        $this->assertSame(2, $handler->getCallCount());
+        Assert::same($handler->getCallCount(), 2);
     }
 
-    #[Test]
     public function honoursACustomMethodSet(): void
     {
         $middleware = new IdempotencyMiddleware(
@@ -210,11 +198,9 @@ final class IdempotencyMiddlewareTest extends TestCase
         $middleware->process($request, $handler);
         $middleware->process($request, $handler);
 
-        // DELETE is now guarded and case-insensitive: the second call replays.
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function nonSuccessResponseIsNotCachedAndReleasesTheClaim(): void
     {
         $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
@@ -223,13 +209,11 @@ final class IdempotencyMiddlewareTest extends TestCase
         $first = $this->middleware->process($request, $handler);
         $second = $this->middleware->process($request, $handler);
 
-        $this->assertSame(409, $first->getStatusCode());
-        $this->assertSame(409, $second->getStatusCode());
-        // Not cached AND claim released: the handler runs again (not a replay, not a 409 in-progress).
-        $this->assertSame(2, $handler->getCallCount());
+        Assert::same($first->getStatusCode(), 409);
+        Assert::same($second->getStatusCode(), 409);
+        Assert::same($handler->getCallCount(), 2);
     }
 
-    #[Test]
     public function cachesSuccessAtTheLowerBoundary(): void
     {
         $request = new FakeRequest(method: 'POST', path: '/p', body: '{}', headers: ['idempotency-key' => ['k']]);
@@ -238,10 +222,9 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request, $handler);
         $this->middleware->process($request, $handler);
 
-        $this->assertSame(1, $handler->getCallCount()); // 200 is cached (status >= 200)
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function doesNotCacheRedirectAtTheUpperBoundary(): void
     {
         $request = new FakeRequest(method: 'POST', path: '/p', body: '{}', headers: ['idempotency-key' => ['k']]);
@@ -250,10 +233,9 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request, $handler);
         $this->middleware->process($request, $handler);
 
-        $this->assertSame(2, $handler->getCallCount()); // 300 is NOT cached (status >= 300)
+        Assert::same($handler->getCallCount(), 2);
     }
 
-    #[Test]
     public function differentPayloadWithSameKeyReturnsUnprocessable(): void
     {
         $request1 = new FakeRequest(
@@ -273,10 +255,9 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request1, $handler);
         $response = $this->middleware->process($request2, $handler);
 
-        $this->assertSame(422, $response->getStatusCode());
+        Assert::same($response->getStatusCode(), 422);
     }
 
-    #[Test]
     public function expiredRecordDoesNotReplay(): void
     {
         $middleware = new IdempotencyMiddleware(
@@ -301,11 +282,10 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $middleware->process($request, $handler);
 
-        $this->assertSame(200, $response->getStatusCode());
-        $this->assertSame(2, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 200);
+        Assert::same($handler->getCallCount(), 2);
     }
 
-    #[Test]
     public function differentKeysAreIndependent(): void
     {
         $request1 = new FakeRequest(
@@ -321,11 +301,10 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request1, $handler);
         $response = $this->middleware->process($request2, $handler);
 
-        $this->assertSame(200, $response->getStatusCode());
-        $this->assertSame(2, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 200);
+        Assert::same($handler->getCallCount(), 2);
     }
 
-    #[Test]
     public function payloadMismatchResponseContainsJsonBody(): void
     {
         $request1 = new FakeRequest(
@@ -343,11 +322,10 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request1, $handler);
         $response = $this->middleware->process($request2, $handler);
 
-        $this->assertSame('application/json', $response->getHeaderLine('Content-Type'));
-        $this->assertStringContainsString('Unprocessable', (string) $response->getBody());
+        Assert::same($response->getHeaderLine('Content-Type'), 'application/json');
+        Assert::string((string) $response->getBody())->contains('Unprocessable');
     }
 
-    #[Test]
     public function replayPreservesHeaders(): void
     {
         $request = new FakeRequest(
@@ -360,10 +338,9 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(200, $response->getStatusCode());
+        Assert::same($response->getStatusCode(), 200);
     }
 
-    #[Test]
     public function replayReturnsExactBody(): void
     {
         $request = new FakeRequest(
@@ -376,10 +353,9 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame('{"id":42,"name":"test"}', (string) $response->getBody());
+        Assert::same((string) $response->getBody(), '{"id":42,"name":"test"}');
     }
 
-    #[Test]
     public function replayPreservesCustomHeader(): void
     {
         $request = new FakeRequest(
@@ -396,12 +372,11 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(201, $response->getStatusCode());
-        $this->assertSame('42', $response->getHeaderLine('X-Resource-Id'));
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 201);
+        Assert::same($response->getHeaderLine('X-Resource-Id'), '42');
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function notExpiredJustBeforeTtl(): void
     {
         $middleware = new IdempotencyMiddleware(
@@ -424,11 +399,10 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $middleware->process($request, $handler);
 
-        $this->assertSame(201, $response->getStatusCode());
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 201);
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function storesRecordAfterFirstRequest(): void
     {
         $request = new FakeRequest(
@@ -440,13 +414,12 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $this->middleware->process($request, $handler);
 
-        $record = $this->storage->load(new \Rasuvaeff\Yii3Idempotency\IdempotencyKey('key-1'));
+        $record = $this->storage->load(new IdempotencyKey('key-1'));
 
-        $this->assertNotNull($record);
-        $this->assertSame(201, $record->response->statusCode);
+        Assert::notNull($record);
+        Assert::same($record->response->statusCode, 201);
     }
 
-    #[Test]
     public function claimedKeyReturnsConflictWhileInFlight(): void
     {
         $request = new FakeRequest(
@@ -456,19 +429,18 @@ final class IdempotencyMiddlewareTest extends TestCase
         );
 
         $this->storage->claim(
-            new \Rasuvaeff\Yii3Idempotency\IdempotencyKey('key-1'),
+            new IdempotencyKey('key-1'),
             \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint::fromRequest($request),
         );
 
         $handler = new FakeHandler();
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(409, $response->getStatusCode());
-        $this->assertSame(0, $handler->getCallCount());
-        $this->assertStringContainsString('currently being processed', (string) $response->getBody());
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($handler->getCallCount(), 0);
+        Assert::string((string) $response->getBody())->contains('currently being processed');
     }
 
-    #[Test]
     public function serverErrorResponseIsNotStored(): void
     {
         $request = new FakeRequest(
@@ -479,16 +451,15 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $response = $this->middleware->process($request, $handler);
 
-        $this->assertSame(500, $response->getStatusCode());
-        $this->assertNull($this->storage->load(new \Rasuvaeff\Yii3Idempotency\IdempotencyKey('key-1')));
+        Assert::same($response->getStatusCode(), 500);
+        Assert::null($this->storage->load(new IdempotencyKey('key-1')));
 
         $retry = $this->middleware->process($request, new FakeHandler(responseStatus: 201));
 
-        $this->assertSame(201, $retry->getStatusCode());
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($retry->getStatusCode(), 201);
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function requestBodyRemainsReadableAfterFingerprinting(): void
     {
         $request = new FakeRequest(
@@ -511,10 +482,9 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         $this->middleware->process($request, $handler);
 
-        $this->assertSame('{"name":"John"}', $seenBody);
+        Assert::same($seenBody, '{"name":"John"}');
     }
 
-    #[Test]
     public function sameKeyDifferentQueryReturnsUnprocessable(): void
     {
         $request1 = new FakeRequest(
@@ -534,11 +504,10 @@ final class IdempotencyMiddlewareTest extends TestCase
         $this->middleware->process($request1, $handler);
         $response = $this->middleware->process($request2, $handler);
 
-        $this->assertSame(422, $response->getStatusCode());
-        $this->assertSame(1, $handler->getCallCount());
+        Assert::same($response->getStatusCode(), 422);
+        Assert::same($handler->getCallCount(), 1);
     }
 
-    #[Test]
     public function releasesClaimWhenHandlerThrows(): void
     {
         $request = new FakeRequest(
@@ -551,13 +520,13 @@ final class IdempotencyMiddlewareTest extends TestCase
 
         try {
             $this->middleware->process($request, $throwingHandler);
-            $this->fail('Expected RuntimeException to be thrown');
+            Assert::fail('Expected RuntimeException');
         } catch (\RuntimeException $exception) {
-            $this->assertSame('boom', $exception->getMessage());
+            Assert::same($exception->getMessage(), 'boom');
         }
 
         $response = $this->middleware->process($request, new FakeHandler());
 
-        $this->assertSame(200, $response->getStatusCode());
+        Assert::same($response->getStatusCode(), 200);
     }
 }

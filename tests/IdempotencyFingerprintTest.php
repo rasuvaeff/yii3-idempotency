@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Test;
 
-#[CoversClass(IdempotencyFingerprint::class)]
-final class IdempotencyFingerprintTest extends TestCase
+#[Test]
+#[Covers(IdempotencyFingerprint::class)]
+final class IdempotencyFingerprintTest
 {
-    #[Test]
     public function createsFromRequest(): void
     {
         $request = new FakeRequest(
@@ -23,10 +23,9 @@ final class IdempotencyFingerprintTest extends TestCase
 
         $fp = IdempotencyFingerprint::fromRequest($request);
 
-        $this->assertSame(64, strlen($fp->hash));
+        Assert::same(strlen($fp->hash), 64);
     }
 
-    #[Test]
     public function sameRequestProducesSameFingerprint(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(
@@ -40,37 +39,33 @@ final class IdempotencyFingerprintTest extends TestCase
             body: '{"name":"John"}',
         ));
 
-        $this->assertTrue($a->equals($b));
+        Assert::true($a->equals($b));
     }
 
-    #[Test]
     public function differentMethodProducesDifferentFingerprint(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(method: 'POST', body: '{}'));
         $b = IdempotencyFingerprint::fromRequest(new FakeRequest(method: 'PUT', body: '{}'));
 
-        $this->assertFalse($a->equals($b));
+        Assert::false($a->equals($b));
     }
 
-    #[Test]
     public function differentPathProducesDifferentFingerprint(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/a'));
         $b = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/b'));
 
-        $this->assertFalse($a->equals($b));
+        Assert::false($a->equals($b));
     }
 
-    #[Test]
     public function differentBodyProducesDifferentFingerprint(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(body: '{"a":1}'));
         $b = IdempotencyFingerprint::fromRequest(new FakeRequest(body: '{"a":2}'));
 
-        $this->assertFalse($a->equals($b));
+        Assert::false($a->equals($b));
     }
 
-    #[Test]
     public function producesExpectedHash(): void
     {
         $request = new FakeRequest(
@@ -82,46 +77,40 @@ final class IdempotencyFingerprintTest extends TestCase
         $expected = hash('sha256', "POST\n/api/test\n\n{\"data\":1}");
         $fp = IdempotencyFingerprint::fromRequest($request);
 
-        $this->assertSame($expected, $fp->hash);
+        Assert::same($fp->hash, $expected);
     }
 
-    #[Test]
     public function producesExpectedHashFromAllFourParts(): void
     {
-        // Method, path, query and body are all distinct, so any swapped/dropped
-        // concat operand changes the digest.
         $request = new FakeRequest(method: 'PUT', path: '/orders/7', query: 'a=1&b=2', body: '{"x":1}');
 
         $expected = hash('sha256', "PUT\n/orders/7\na=1&b=2\n{\"x\":1}");
 
-        $this->assertSame($expected, IdempotencyFingerprint::fromRequest($request)->hash);
+        Assert::same(IdempotencyFingerprint::fromRequest($request)->hash, $expected);
     }
 
-    #[Test]
     public function differentQueryProducesDifferentFingerprint(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/orders', query: 'retry=1'));
         $b = IdempotencyFingerprint::fromRequest(new FakeRequest(path: '/orders', query: 'retry=2'));
 
-        $this->assertFalse($a->equals($b));
+        Assert::false($a->equals($b));
     }
 
-    #[Test]
     public function rewindsSeekableBodyAfterReading(): void
     {
         $request = new FakeRequest(body: '{"name":"John"}');
 
         IdempotencyFingerprint::fromRequest($request);
 
-        $this->assertSame('{"name":"John"}', $request->getBody()->getContents());
+        Assert::same($request->getBody()->getContents(), '{"name":"John"}');
     }
 
-    #[Test]
     public function emptyBodyProducesDistinctHash(): void
     {
         $a = IdempotencyFingerprint::fromRequest(new FakeRequest(body: ''));
         $b = IdempotencyFingerprint::fromRequest(new FakeRequest(body: '{}'));
 
-        $this->assertFalse($a->equals($b));
+        Assert::false($a->equals($b));
     }
 }
