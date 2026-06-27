@@ -10,6 +10,7 @@
     "phpUnit": {
         "configDir": "."
     },
+    "testFramework": "testo",
     // ~91% is the honest ceiling. Survivors are low-value or equivalent:
     //   - `ttlSeconds = 3600` default int (only a long-lived stored record would pin it);
     //   - `(string) $name` cast on already-string header keys (redundant);

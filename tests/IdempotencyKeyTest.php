@@ -4,104 +4,100 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
+use Testo\Test;
 
-#[CoversClass(IdempotencyKey::class)]
-final class IdempotencyKeyTest extends TestCase
+#[Test]
+#[Covers(IdempotencyKey::class)]
+final class IdempotencyKeyTest
 {
-    #[Test]
     public function acceptsValidKey(): void
     {
         $key = new IdempotencyKey('abc-123.456_XYZ');
 
-        $this->assertSame('abc-123.456_XYZ', $key->value);
+        Assert::same($key->value, 'abc-123.456_XYZ');
     }
 
-    #[Test]
     public function acceptsSingleChar(): void
     {
         $key = new IdempotencyKey('a');
 
-        $this->assertSame('a', $key->value);
+        Assert::same($key->value, 'a');
     }
 
-    #[Test]
     public function acceptsMaxLength(): void
     {
         $value = str_repeat('a', 255);
         $key = new IdempotencyKey($value);
 
-        $this->assertSame($value, $key->value);
+        Assert::same($key->value, $value);
     }
 
-    #[Test]
     public function rejectsEmptyString(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('between 1 and 255');
-
-        new IdempotencyKey('');
+        try {
+            new IdempotencyKey('');
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            Assert::string($e->getMessage())->contains('between 1 and 255');
+        }
     }
 
-    #[Test]
     public function rejectsTooLong(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('between 1 and 255');
-
-        new IdempotencyKey(str_repeat('a', 256));
+        try {
+            new IdempotencyKey(str_repeat('a', 256));
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            Assert::string($e->getMessage())->contains('between 1 and 255');
+        }
     }
 
-    #[Test]
     public function rejectsInvalidCharacters(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('invalid characters');
-
-        new IdempotencyKey('key with spaces');
+        try {
+            new IdempotencyKey('key with spaces');
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            Assert::string($e->getMessage())->contains('invalid characters');
+        }
     }
 
-    /**
-     * @return array<string, list{string}>
-     */
-    public static function invalidKeyProvider(): array
+    public static function invalidKeyProvider(): iterable
     {
-        return [
-            'contains @' => ['key@value'],
-            'contains !' => ['key!value'],
-            'contains /' => ['key/value'],
-            'contains :' => ['key:value'],
-        ];
+        yield 'contains @' => ['key@value'];
+        yield 'contains !' => ['key!value'];
+        yield 'contains /' => ['key/value'];
+        yield 'contains :' => ['key:value'];
     }
 
-    #[Test]
     #[DataProvider('invalidKeyProvider')]
     public function rejectsInvalidChars(string $value): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-
-        new IdempotencyKey($value);
+        try {
+            new IdempotencyKey($value);
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            Assert::true(true);
+        }
     }
 
-    #[Test]
     public function equalsReturnsTrueForSameKey(): void
     {
         $a = new IdempotencyKey('key-1');
         $b = new IdempotencyKey('key-1');
 
-        $this->assertTrue($a->equals($b));
+        Assert::true($a->equals($b));
     }
 
-    #[Test]
     public function equalsReturnsFalseForDifferentKey(): void
     {
         $a = new IdempotencyKey('key-1');
         $b = new IdempotencyKey('key-2');
 
-        $this->assertFalse($a->equals($b));
+        Assert::false($a->equals($b));
     }
 }

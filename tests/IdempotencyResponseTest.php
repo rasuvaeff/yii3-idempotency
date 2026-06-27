@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\Yii3Idempotency\IdempotencyResponse;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Test;
 
-#[CoversClass(IdempotencyResponse::class)]
-final class IdempotencyResponseTest extends TestCase
+#[Test]
+#[Covers(IdempotencyResponse::class)]
+final class IdempotencyResponseTest
 {
-    #[Test]
     public function storesValues(): void
     {
         $response = new IdempotencyResponse(
@@ -21,16 +21,15 @@ final class IdempotencyResponseTest extends TestCase
             body: '{"id":1}',
         );
 
-        $this->assertSame(201, $response->statusCode);
-        $this->assertSame(['content-type' => ['application/json']], $response->headers);
-        $this->assertSame('{"id":1}', $response->body);
+        Assert::same($response->statusCode, 201);
+        Assert::same($response->headers, ['content-type' => ['application/json']]);
+        Assert::same($response->body, '{"id":1}');
     }
 
-    #[Test]
     public function defaultsToEmptyHeaders(): void
     {
         $response = new IdempotencyResponse(statusCode: 200, headers: [], body: '');
 
-        $this->assertSame([], $response->headers);
+        Assert::same($response->headers, []);
     }
 }

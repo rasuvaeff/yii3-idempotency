@@ -4,22 +4,22 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\Yii3Idempotency\IdempotencyPolicy;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
+use Testo\Test;
 
-#[CoversClass(IdempotencyPolicy::class)]
-final class IdempotencyPolicyTest extends TestCase
+#[Test]
+#[Covers(IdempotencyPolicy::class)]
+final class IdempotencyPolicyTest
 {
-    #[Test]
     #[DataProvider('validConfigProvider')]
     public function fromConfigValueResolvesExpectedCase(
         string $value,
         IdempotencyPolicy $expected,
     ): void {
-        $this->assertSame($expected, IdempotencyPolicy::fromConfigValue($value));
+        Assert::same(IdempotencyPolicy::fromConfigValue($value), $expected);
     }
 
     public static function validConfigProvider(): iterable
@@ -30,12 +30,13 @@ final class IdempotencyPolicyTest extends TestCase
         yield 'uppercase' => ['REJECT', IdempotencyPolicy::Reject];
     }
 
-    #[Test]
     public function fromConfigValueThrowsOnInvalidValue(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('Invalid idempotency policy "unknown"');
-
-        IdempotencyPolicy::fromConfigValue('unknown');
+        try {
+            IdempotencyPolicy::fromConfigValue('unknown');
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            Assert::string($e->getMessage())->contains('Invalid idempotency policy "unknown"');
+        }
     }
 }
