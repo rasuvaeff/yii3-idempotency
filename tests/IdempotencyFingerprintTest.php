@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
+use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Gen;
+use Rasuvaeff\PropertyTesting\Property;
 use Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -112,5 +115,29 @@ final class IdempotencyFingerprintTest
         $b = IdempotencyFingerprint::fromRequest(new FakeRequest(body: '{}'));
 
         Assert::false($a->equals($b));
+    }
+
+    #[Property(runs: 300)]
+    public function fromRequestIsDeterministic(string $method, string $path, string $query, string $body): void
+    {
+        $a = IdempotencyFingerprint::fromRequest(
+            new FakeRequest(method: $method, path: $path, query: $query, body: $body),
+        );
+        $b = IdempotencyFingerprint::fromRequest(
+            new FakeRequest(method: $method, path: $path, query: $query, body: $body),
+        );
+
+        Assert::true($a->equals($b));
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function fromRequestIsDeterministicGenerators(): array
+    {
+        return [
+            'method' => Gen::oneOf('GET', 'POST', 'PUT', 'PATCH', 'DELETE'),
+            'path' => Gen::stringAscii(),
+            'query' => Gen::stringAscii(),
+            'body' => Gen::stringAscii(),
+        ];
     }
 }

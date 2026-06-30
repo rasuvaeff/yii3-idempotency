@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
+use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Gen;
+use Rasuvaeff\PropertyTesting\Property;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -99,5 +102,50 @@ final class IdempotencyKeyTest
         $b = new IdempotencyKey('key-2');
 
         Assert::false($a->equals($b));
+    }
+
+    #[Property(runs: 300)]
+    public function validKeyPreservesValueAndEqualsItself(string $value): void
+    {
+        $key = new IdempotencyKey($value);
+
+        Assert::same($key->value, $value);
+        Assert::true($key->equals($key));
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function validKeyPreservesValueAndEqualsItselfGenerators(): array
+    {
+        return ['value' => self::keyGenerator()];
+    }
+
+    #[Property(runs: 300)]
+    public function equalsReflectsValueEquality(string $a, string $b): void
+    {
+        Assert::same((new IdempotencyKey($a))->equals(new IdempotencyKey($b)), $a === $b);
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function equalsReflectsValueEqualityGenerators(): array
+    {
+        return [
+            'a' => self::keyGenerator(),
+            'b' => self::keyGenerator(),
+        ];
+    }
+
+    /**
+     * Generates valid idempotency keys: 1-100 chars drawn from the allowed
+     * `[A-Za-z0-9._-]` alphabet, so they always pass construction validation.
+     */
+    private static function keyGenerator(): ArbitraryInterface
+    {
+        return Gen::map(
+            Gen::nonEmptyArrayOf(Gen::intBetween(0, 64)),
+            static fn(array $codes): string => \implode('', \array_map(
+                static fn(int $code): string => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-'[$code],
+                $codes,
+            )),
+        );
     }
 }
