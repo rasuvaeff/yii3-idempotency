@@ -4,12 +4,21 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
+use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Gen;
+use Rasuvaeff\PropertyTesting\Property;
+use Rasuvaeff\PropertyTesting\StateMachine\CommandSequence;
+use Rasuvaeff\PropertyTesting\StateMachine\StateMachine;
 use Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyRecord;
 use Rasuvaeff\Yii3Idempotency\IdempotencyResponse;
 use Rasuvaeff\Yii3Idempotency\IdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
+use Rasuvaeff\Yii3Idempotency\Tests\Support\ClaimCommand;
+use Rasuvaeff\Yii3Idempotency\Tests\Support\IdempotencyHarness;
+use Rasuvaeff\Yii3Idempotency\Tests\Support\ReleaseCommand;
+use Rasuvaeff\Yii3Idempotency\Tests\Support\StoreCommand;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Lifecycle\BeforeTest;
@@ -106,6 +115,36 @@ final class InMemoryIdempotencyStorageTest
     private function createFingerprint(string $hash): IdempotencyFingerprint
     {
         return new IdempotencyFingerprint($hash);
+    }
+
+    /**
+     * Model-based test: under any interleaving of claim, store and release, the
+     * storage tracks a simple per-key model — claim is a mutex (succeeds iff not
+     * already claimed), a stored record stays loadable, and release clears only
+     * the claim, never the record. Keys 0-2 are exercised; an untouched key must
+     * stay empty. This reaches interactions the isolated tests above do not.
+     */
+    #[Property(runs: 300)]
+    public function claimStoreReleaseTrackTheModel(CommandSequence $sequence): void
+    {
+        $harness = new IdempotencyHarness(4);
+
+        StateMachine::check($sequence, static fn(): IdempotencyHarness => $harness);
+
+        // A key the sequence never addressed leaked no state.
+        Assert::false($harness->loaded(3));
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function claimStoreReleaseTrackTheModelGenerators(): array
+    {
+        $initialModel = ['claimed' => [false, false, false], 'stored' => [false, false, false]];
+
+        return ['sequence' => Gen::commands($initialModel, [
+            Gen::map(Gen::intBetween(0, 2), static fn(int $index): ClaimCommand => new ClaimCommand($index)),
+            Gen::map(Gen::intBetween(0, 2), static fn(int $index): StoreCommand => new StoreCommand($index)),
+            Gen::map(Gen::intBetween(0, 2), static fn(int $index): ReleaseCommand => new ReleaseCommand($index)),
+        ])];
     }
 
     private function createRecord(IdempotencyKey $key, int $ttlSeconds = 3600): IdempotencyRecord
