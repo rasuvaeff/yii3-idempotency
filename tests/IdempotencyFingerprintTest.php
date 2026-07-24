@@ -131,7 +131,7 @@ final class IdempotencyFingerprintTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function fromRequestIsDeterministicGenerators(): array
+    public static function fromRequestIsDeterministicGenerators(): array
     {
         return [
             'method' => Gen::oneOf('GET', 'POST', 'PUT', 'PATCH', 'DELETE'),
