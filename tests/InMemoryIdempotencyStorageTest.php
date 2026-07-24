@@ -136,7 +136,7 @@ final class InMemoryIdempotencyStorageTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function claimStoreReleaseTrackTheModelGenerators(): array
+    public static function claimStoreReleaseTrackTheModelGenerators(): array
     {
         $initialModel = ['claimed' => [false, false, false], 'stored' => [false, false, false]];
 

@@ -114,7 +114,7 @@ final class IdempotencyKeyTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function validKeyPreservesValueAndEqualsItselfGenerators(): array
+    public static function validKeyPreservesValueAndEqualsItselfGenerators(): array
     {
         return ['value' => self::keyGenerator()];
     }
@@ -126,7 +126,7 @@ final class IdempotencyKeyTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function equalsReflectsValueEqualityGenerators(): array
+    public static function equalsReflectsValueEqualityGenerators(): array
     {
         return [
             'a' => self::keyGenerator(),
