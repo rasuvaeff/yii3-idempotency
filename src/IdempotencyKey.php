@@ -13,7 +13,7 @@ final readonly class IdempotencyKey
 
     private const int MAX_LENGTH = 255;
 
-    private const string PATTERN = '/^[A-Za-z0-9._-]+$/';
+    private const string PATTERN = '/^[A-Za-z0-9._-]+\z/';
 
     public string $value;
 

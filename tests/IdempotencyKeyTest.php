@@ -75,6 +75,7 @@ final class IdempotencyKeyTest
         yield 'contains !' => ['key!value'];
         yield 'contains /' => ['key/value'];
         yield 'contains :' => ['key:value'];
+        yield 'trailing newline' => ["key\n"];
     }
 
     #[DataProvider('invalidKeyProvider')]

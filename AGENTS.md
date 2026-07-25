@@ -52,7 +52,7 @@ make release-check
 
 ## Invariants & gotchas
 
-- `IdempotencyKey` validates: 1-255 chars, pattern `/^[A-Za-z0-9._-]+$/`.
+- `IdempotencyKey` validates: 1-255 chars, pattern `/^[A-Za-z0-9._-]+\z/` (`\z`, not `$` — PCRE `$` matches before a trailing `\n`).
 - Fingerprint: `sha256(method + "\n" + path + "\n" + query + "\n" + body)`; the body
   stream is rewound after reading (when seekable).
 - Conflict semantics: 422 for payload mismatch, 409 for an in-flight duplicate.
