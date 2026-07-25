@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 — 2026-07-25
+
+- Reject trailing newlines in `IdempotencyKey`: anchor the validation pattern
+  with `\z` instead of `$` (PCRE `$` matches before a trailing `\n`, which let
+  `"<key>\n"` slip through and become the storage key).
+
 ## 1.1.0 — 2026-07-25
 
 - Ship an AI agent skill (`resources/skills/rasuvaeff-yii3-idempotency/SKILL.md` +
