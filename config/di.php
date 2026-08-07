@@ -8,7 +8,10 @@ use Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\IdempotencyPolicy;
+use Rasuvaeff\Yii3Idempotency\IdempotencyScope;
 use Rasuvaeff\Yii3Idempotency\IdempotencyStorage;
+use Rasuvaeff\Yii3Idempotency\RequestTargetScopeResolver;
+use Rasuvaeff\Yii3Idempotency\ScopedIdempotencyKeyExtractor;
 
 /** @var array $params */
 
@@ -18,7 +21,22 @@ return [
             'headerName' => $params['rasuvaeff/yii3-idempotency']['headerName'] ?? 'Idempotency-Key',
         ],
     ],
-    IdempotencyKeyExtractor::class => HeaderIdempotencyKeyExtractor::class,
+    IdempotencyKeyExtractor::class => static function (
+        HeaderIdempotencyKeyExtractor $extractor,
+    ) use ($params): IdempotencyKeyExtractor {
+        $scope = $params['rasuvaeff/yii3-idempotency']['scope'] ?? null;
+
+        if ($scope === null) {
+            return $extractor;
+        }
+
+        return new ScopedIdempotencyKeyExtractor(
+            extractor: $extractor,
+            scopeResolver: $scope === 'auto'
+                ? new RequestTargetScopeResolver()
+                : new IdempotencyScope((string) $scope),
+        );
+    },
     IdempotencyMiddleware::class => static fn (
         IdempotencyKeyExtractor $keyExtractor,
         IdempotencyStorage $storage,

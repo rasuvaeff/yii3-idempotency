@@ -27,8 +27,13 @@ final class IdempotencyMiddleware implements MiddlewareInterface
      */
     private readonly array $methods;
 
+    private readonly FailureClassifier $failureClassifier;
+
     /**
      * @param list<string> $methods HTTP methods idempotency applies to; others pass through untouched
+     * @param DomainFailureRenderer|null $domainFailureRenderer renders domain failures so they can be cached;
+     *                                                          `null` keeps every thrown failure retryable
+     * @param FailureClassifier|null $failureClassifier defaults to {@see DefaultFailureClassifier}
      */
     public function __construct(
         private readonly IdempotencyKeyExtractor $keyExtractor,
@@ -38,12 +43,15 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         private readonly IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
         private readonly int $ttlSeconds = 3600,
         array $methods = ['POST', 'PUT', 'PATCH'],
+        private readonly ?DomainFailureRenderer $domainFailureRenderer = null,
+        ?FailureClassifier $failureClassifier = null,
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
             throw new \InvalidArgumentException('TTL seconds must be greater than 0');
         }
 
         $this->methods = array_map(strtoupper(...), $methods);
+        $this->failureClassifier = $failureClassifier ?? new DefaultFailureClassifier();
     }
 
     #[\Override]
@@ -102,10 +110,59 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
             $this->storage->store($record);
         } catch (\Throwable $throwable) {
+            $rendered = $this->cacheDomainFailure(
+                key: $key,
+                fingerprint: $fingerprint,
+                request: $request,
+                throwable: $throwable,
+            );
+
+            if ($rendered !== null) {
+                return $rendered;
+            }
+
             $this->storage->release($key);
 
             throw $throwable;
         }
+
+        return $response;
+    }
+
+    /**
+     * Caches a deterministic domain failure as an ordinary response snapshot, so
+     * a retry under the same key replays it instead of re-running the handler.
+     *
+     * Returns `null` when the failure stays retryable — no renderer configured,
+     * a non-domain kind, or a renderer that declined it.
+     */
+    private function cacheDomainFailure(
+        IdempotencyKey $key,
+        IdempotencyFingerprint $fingerprint,
+        ServerRequestInterface $request,
+        \Throwable $throwable,
+    ): ?ResponseInterface {
+        if ($this->domainFailureRenderer === null) {
+            return null;
+        }
+
+        if ($this->failureClassifier->classify($throwable) !== FailureKind::Domain) {
+            return null;
+        }
+
+        $response = $this->domainFailureRenderer->render($throwable, $request);
+
+        if ($response === null) {
+            return null;
+        }
+
+        $this->storage->store(IdempotencyRecord::create(
+            key: $key,
+            fingerprint: $fingerprint,
+            response: $this->captureResponse($response),
+            clock: $this->clock,
+            ttlSeconds: $this->ttlSeconds,
+        ));
 
         return $response;
     }

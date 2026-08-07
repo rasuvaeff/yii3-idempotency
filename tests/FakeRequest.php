@@ -19,6 +19,7 @@ final class FakeRequest implements ServerRequestInterface
      * @param array<string, mixed> $serverParams
      * @param array<string, string|int|list<string>> $queryParams
      * @param array<string, list<string>> $headers
+     * @param array<array-key, mixed>|object|null $parsedBody
      */
     public function __construct(
         private readonly string $method = 'POST',
@@ -28,6 +29,7 @@ final class FakeRequest implements ServerRequestInterface
         private readonly array $headers = [],
         private readonly array $serverParams = [],
         private readonly array $queryParams = [],
+        private readonly array|object|null $parsedBody = null,
     ) {}
 
     #[\Override]
@@ -115,9 +117,9 @@ final class FakeRequest implements ServerRequestInterface
     }
 
     #[\Override]
-    public function getParsedBody(): null
+    public function getParsedBody(): array|object|null
     {
-        return null;
+        return $this->parsedBody;
     }
 
     #[\Override]

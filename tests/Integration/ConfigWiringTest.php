@@ -9,7 +9,9 @@ use Rasuvaeff\Yii3Idempotency\IdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\IdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
+use Rasuvaeff\Yii3Idempotency\ScopedIdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeClock;
+use Rasuvaeff\Yii3Idempotency\Tests\FakeRequest;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeResponseFactory;
 use Testo\Assert;
 use Testo\Codecov\CoversNothing;
@@ -83,6 +85,53 @@ final class ConfigWiringTest
         );
 
         Assert::instanceOf($middleware, IdempotencyMiddleware::class);
+    }
+
+    public function extractorFactoryReturnsTheBareExtractorWhenScopeIsAbsent(): void
+    {
+        $extractor = new HeaderIdempotencyKeyExtractor();
+        $factory = $this->loadDi([])[IdempotencyKeyExtractor::class];
+        Assert::true(is_callable($factory));
+
+        Assert::same($factory($extractor), $extractor);
+    }
+
+    public function extractorFactoryAppliesAutoScope(): void
+    {
+        $factory = $this->loadDi([
+            'rasuvaeff/yii3-idempotency' => ['scope' => 'auto'],
+        ])[IdempotencyKeyExtractor::class];
+        Assert::true(is_callable($factory));
+
+        $extractor = $factory(new HeaderIdempotencyKeyExtractor());
+        Assert::instanceOf($extractor, ScopedIdempotencyKeyExtractor::class);
+
+        $key = $extractor->extract(new FakeRequest(
+            method: 'POST',
+            path: '/api/orders',
+            headers: ['idempotency-key' => ['key-1']],
+        ));
+
+        Assert::same($key?->value, hash('sha256', "POST /api/orders\0key-1"));
+    }
+
+    public function extractorFactoryAppliesANamedScope(): void
+    {
+        $factory = $this->loadDi([
+            'rasuvaeff/yii3-idempotency' => ['scope' => 'orders'],
+        ])[IdempotencyKeyExtractor::class];
+        Assert::true(is_callable($factory));
+
+        $extractor = $factory(new HeaderIdempotencyKeyExtractor());
+        Assert::instanceOf($extractor, ScopedIdempotencyKeyExtractor::class);
+
+        $key = $extractor->extract(new FakeRequest(
+            method: 'POST',
+            path: '/api/orders',
+            headers: ['idempotency-key' => ['key-1']],
+        ));
+
+        Assert::same($key?->value, hash('sha256', "orders\0key-1"));
     }
 
     /**

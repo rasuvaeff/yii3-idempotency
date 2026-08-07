@@ -15,6 +15,9 @@ composer require rasuvaeff/yii3-idempotency
 - Payload mismatch: same key + different fingerprint => 422
 - In-flight duplicate: claim already taken => 409
 - Only 2xx handler responses are cached; non-2xx (3xx/4xx incl. retryable 409/423/429, and any 5xx) release the claim and stay retryable
+- Thrown failures: cached ONLY when a `DomainFailureRenderer` is configured AND the `FailureClassifier` returns `FailureKind::Domain`; otherwise the claim is released and the throwable is rethrown
+- Returning a 4xx response and throwing a domain exception are different paths — only the throwing path is classified
+- Scoping (optional): storage key becomes `sha256(scope . "\0" . key)`, a fixed 64 chars; unscoped keys are stored verbatim
 - Idempotency applies only to configured `methods` (default POST/PUT/PATCH, case-insensitive); other methods pass through untouched
 - Policy: `PassThrough` (skip without key) or `Reject` (400 without key)
 - TTL: records expire after configured seconds
@@ -89,8 +92,69 @@ $middleware = new IdempotencyMiddleware(
     clock: $clock,                     // PSR-20
     policy: IdempotencyPolicy::PassThrough,
     ttlSeconds: 3600,
+    methods: ['POST', 'PUT', 'PATCH'],
+    domainFailureRenderer: null,  // DomainFailureRenderer|null — null keeps every throwable retryable
+    failureClassifier: null,      // FailureClassifier|null — defaults to DefaultFailureClassifier
 );
 ```
+
+### PayloadIdempotencyKeyExtractor
+
+```php
+$extractor = new PayloadIdempotencyKeyExtractor('command.orderId');       // required (default)
+$extractor = new PayloadIdempotencyKeyExtractor('id', required: false);   // null instead of throwing
+
+$extractor->extract($request); // reads getParsedBody() by dot path; string|int values only
+```
+
+Unresolvable + `required: true` => `MissingKeyException` (thrown before any claim is taken).
+Segments are literal — a payload key containing a dot is not addressable.
+
+### IdempotencyScope / IdempotencyScopeResolver / ScopedIdempotencyKeyExtractor
+
+```php
+interface IdempotencyScopeResolver {
+    public function resolve(ServerRequestInterface $request): IdempotencyScope;
+}
+
+$scope = new IdempotencyScope('orders');   // 1-1024 chars, no control characters; resolves to itself
+$scope->apply($key);                       // IdempotencyKey(sha256(name . "\0" . key->value))
+$scope->equals($other);                    // bool
+
+$extractor = new ScopedIdempotencyKeyExtractor(
+    extractor: new HeaderIdempotencyKeyExtractor(),
+    scopeResolver: new RequestTargetScopeResolver(), // scope name = "POST /api/orders" (query excluded)
+);
+```
+
+### FailureKind / FailureClassifier / DefaultFailureClassifier / RetryableFailure
+
+```php
+enum FailureKind { case Domain; case Infrastructure; case Bug; }
+
+interface FailureClassifier {
+    public function classify(\Throwable $failure): FailureKind;
+}
+
+interface RetryableFailure extends \Throwable {}  // marker => Infrastructure
+
+$classifier = new DefaultFailureClassifier([MyBugException::class => FailureKind::Bug]);
+```
+
+Order: overrides (`instanceof`, declaration order) → `RetryableFailure` = Infrastructure →
+any `\Exception` = Domain → everything else (`\Error`) = Infrastructure. `Bug` is never inferred.
+Only `Domain` is cached; `Infrastructure` and `Bug` release the claim and rethrow.
+
+### DomainFailureRenderer
+
+```php
+interface DomainFailureRenderer {
+    public function render(\Throwable $failure, ServerRequestInterface $request): ?ResponseInterface;
+}
+```
+
+Returning `null` declines the failure: claim released, original throwable rethrown.
+Whatever it returns is stored verbatim, so first attempt and replay are byte-identical.
 
 ### IdempotencyRecord
 
@@ -109,6 +173,11 @@ return [
         'headerName' => 'Idempotency-Key',
         'policy' => 'pass_through',
         'ttlSeconds' => 3600,
+        'methods' => ['POST', 'PUT', 'PATCH'],
+        'scope' => null, // null — global; 'auto' — RequestTargetScopeResolver; any other string — IdempotencyScope
     ],
 ];
 ```
+
+`DomainFailureRenderer` and `FailureClassifier` have no default DI binding — wire them
+in the application when domain-failure caching is wanted.

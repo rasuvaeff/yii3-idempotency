@@ -8,5 +8,8 @@ return [
         'policy' => 'pass_through',
         'ttlSeconds' => 3600,
         'methods' => ['POST', 'PUT', 'PATCH'],
+        // null — keys are global; 'auto' — scoped by "METHOD /path";
+        // any other string — an explicit scope name shared by related endpoints
+        'scope' => null,
     ],
 ];

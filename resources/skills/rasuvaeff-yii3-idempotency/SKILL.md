@@ -3,10 +3,11 @@ name: rasuvaeff-yii3-idempotency
 description: >-
   Prevent duplicate processing of POST/PUT/PATCH requests in Yii3 APIs with
   rasuvaeff/yii3-idempotency — IdempotencyMiddleware, IdempotencyKey,
-  IdempotencyFingerprint, IdempotencyStorage, IdempotencyPolicy. Use when
+  IdempotencyFingerprint, IdempotencyStorage, IdempotencyPolicy,
+  IdempotencyScope, FailureClassifier, DomainFailureRenderer. Use when
   writing, reviewing or debugging idempotency-key handling, duplicate-request
-  replay, or 409/422 conflict responses in a project that has this package
-  installed.
+  replay, key scoping, domain-failure caching, or 409/422 conflict responses in
+  a project that has this package installed.
 ---
 
 # rasuvaeff/yii3-idempotency
@@ -26,10 +27,21 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
    client can retry under the same key. Never "fix" a failing retry by caching
    an error response.
 
+   The one exception is opt-in and applies to *thrown* failures only: with a
+   `DomainFailureRenderer` configured, a throwable the `FailureClassifier` calls
+   `FailureKind::Domain` is rendered, stored and replayed for the whole TTL.
+   `\Error`, anything implementing `RetryableFailure`, and anything overridden
+   as `Bug` still release the claim. Classify conservatively — a transient
+   failure mislabelled `Domain` is pinned until the record expires.
+
 3. **Conflict semantics are fixed contract.** Same key + different payload
    fingerprint → 422; same key while the first request is still in flight
    → 409; replay (same key + same fingerprint) → cached response, handler NOT
    called. Key format: 1-255 chars, `[A-Za-z0-9._-]+`.
+
+   Keys are global unless a `ScopedIdempotencyKeyExtractor` is wired in, which
+   makes the storage key `sha256(scope . "\0" . key)` — a fixed 64 chars, so
+   scoped records are opaque and cannot collide across endpoints.
 
 4. **Storage claim must be atomic.** `IdempotencyStorage::claim()` is a
    compare-and-set; the `-db` backend implements it atomically.
@@ -57,7 +69,12 @@ $middleware = new IdempotencyMiddleware(
 
 With the Yii3 config plugin, tune via `params.php` under
 `'rasuvaeff/yii3-idempotency'` (`headerName`, `policy`, `ttlSeconds`,
-`methods`).
+`methods`, `scope`). `scope` accepts `null` (global), `'auto'`
+(`RequestTargetScopeResolver`) or an explicit scope name.
+
+Keys can also come from the payload instead of a header:
+`new PayloadIdempotencyKeyExtractor('command.orderId')` — unresolvable paths
+throw `MissingKeyException` unless constructed with `required: false`.
 
 ## Full API
 
