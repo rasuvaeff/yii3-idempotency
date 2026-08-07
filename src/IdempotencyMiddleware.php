@@ -14,7 +14,7 @@ use Psr\Http\Server\RequestHandlerInterface;
 /**
  * @api
  */
-final class IdempotencyMiddleware implements MiddlewareInterface
+final readonly class IdempotencyMiddleware implements MiddlewareInterface
 {
     private const int MIN_TTL_SECONDS = 1;
 
@@ -25,9 +25,9 @@ final class IdempotencyMiddleware implements MiddlewareInterface
     /**
      * @var list<string>
      */
-    private readonly array $methods;
+    private array $methods;
 
-    private readonly FailureClassifier $failureClassifier;
+    private FailureClassifier $failureClassifier;
 
     /**
      * @param list<string> $methods HTTP methods idempotency applies to; others pass through untouched
@@ -36,14 +36,14 @@ final class IdempotencyMiddleware implements MiddlewareInterface
      * @param FailureClassifier|null $failureClassifier defaults to {@see DefaultFailureClassifier}
      */
     public function __construct(
-        private readonly IdempotencyKeyExtractor $keyExtractor,
-        private readonly IdempotencyStorage $storage,
-        private readonly ResponseFactoryInterface $responseFactory,
-        private readonly ClockInterface $clock,
-        private readonly IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
-        private readonly int $ttlSeconds = 3600,
+        private IdempotencyKeyExtractor $keyExtractor,
+        private IdempotencyStorage $storage,
+        private ResponseFactoryInterface $responseFactory,
+        private ClockInterface $clock,
+        private IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
+        private int $ttlSeconds = 3600,
         array $methods = ['POST', 'PUT', 'PATCH'],
-        private readonly ?DomainFailureRenderer $domainFailureRenderer = null,
+        private ?DomainFailureRenderer $domainFailureRenderer = null,
         ?FailureClassifier $failureClassifier = null,
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
@@ -63,7 +63,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         $key = $this->keyExtractor->extract($request);
 
-        if ($key === null) {
+        if (!$key instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyKey) {
             return match ($this->policy) {
                 IdempotencyPolicy::Reject => $this->responseFactory->createResponse(400),
                 IdempotencyPolicy::PassThrough => $handler->handle($request),
@@ -74,7 +74,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         $existing = $this->storage->load($key);
 
-        if ($existing !== null) {
+        if ($existing instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyRecord) {
             if (!$existing->fingerprint->equals($fingerprint)) {
                 return $this->payloadMismatchResponse();
             }
@@ -117,7 +117,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
                 throwable: $throwable,
             );
 
-            if ($rendered !== null) {
+            if ($rendered instanceof \Psr\Http\Message\ResponseInterface) {
                 return $rendered;
             }
 
@@ -142,7 +142,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
         ServerRequestInterface $request,
         \Throwable $throwable,
     ): ?ResponseInterface {
-        if ($this->domainFailureRenderer === null) {
+        if (!$this->domainFailureRenderer instanceof \Rasuvaeff\Yii3Idempotency\DomainFailureRenderer) {
             return null;
         }
 
@@ -152,7 +152,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         $response = $this->domainFailureRenderer->render($throwable, $request);
 
-        if ($response === null) {
+        if (!$response instanceof \Psr\Http\Message\ResponseInterface) {
             return null;
         }
 

@@ -28,7 +28,7 @@ final class FakeHandler implements RequestHandlerInterface
     {
         $this->callCount++;
 
-        if ($this->throwable !== null) {
+        if ($this->throwable instanceof \Throwable) {
             throw $this->throwable;
         }
 

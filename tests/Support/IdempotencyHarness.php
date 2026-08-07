@@ -19,17 +19,17 @@ use Rasuvaeff\Yii3Idempotency\Tests\FakeClock;
  * The system under test for the model-based property in
  * {@see \Rasuvaeff\Yii3Idempotency\Tests\InMemoryIdempotencyStorageTest}.
  */
-final class IdempotencyHarness
+final readonly class IdempotencyHarness
 {
     private const int TTL_SECONDS = 3600;
 
-    private readonly InMemoryIdempotencyStorage $storage;
-    private readonly FakeClock $clock;
-    private readonly IdempotencyFingerprint $fingerprint;
-    private readonly IdempotencyResponse $response;
+    private InMemoryIdempotencyStorage $storage;
+    private FakeClock $clock;
+    private IdempotencyFingerprint $fingerprint;
+    private IdempotencyResponse $response;
 
     /** @var list<IdempotencyKey> */
-    private readonly array $keys;
+    private array $keys;
 
     public function __construct(int $keyCount)
     {
@@ -66,7 +66,7 @@ final class IdempotencyHarness
 
     public function loaded(int $index): bool
     {
-        return $this->storage->load($this->keys[$index]) !== null;
+        return $this->storage->load($this->keys[$index]) instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyRecord;
     }
 
     /**
@@ -77,6 +77,6 @@ final class IdempotencyHarness
      */
     public function loadedSnapshot(int $count): array
     {
-        return array_map(fn(int $i): bool => $this->loaded($i), range(0, $count - 1));
+        return array_map($this->loaded(...), range(0, $count - 1));
     }
 }

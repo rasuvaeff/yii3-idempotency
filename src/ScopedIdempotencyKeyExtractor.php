@@ -25,7 +25,7 @@ final readonly class ScopedIdempotencyKeyExtractor implements IdempotencyKeyExtr
     {
         $key = $this->extractor->extract($request);
 
-        if ($key === null) {
+        if (!$key instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyKey) {
             return null;
         }
 

@@ -11,12 +11,7 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final readonly class IdempotencyFingerprint
 {
-    public string $hash;
-
-    public function __construct(string $hash)
-    {
-        $this->hash = $hash;
-    }
+    public function __construct(public string $hash) {}
 
     public static function fromRequest(ServerRequestInterface $request): self
     {
