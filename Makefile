@@ -56,11 +56,11 @@ update-deps:
 # ("dubious ownership") and the whole target dies with exit 128. Both paths are
 # needed: roave clones the worktree, and git resolves that through /app/.git.
 release-check:
-	$(DOCKER) sh -c '$(SAFE_DIR); composer release-check'
+	$(DOCKER) sh -c '$(SAFE_DIR) && composer release-check'
 	$(MAKE) mutation
 
 bc-check:
-	$(DOCKER) sh -c '$(SAFE_DIR); \
+	$(DOCKER) sh -c '$(SAFE_DIR) && \
 	  LATEST=$$(git describe --tags --abbrev=0 2>/dev/null || true); \
 	  if [ -n "$$LATEST" ]; then \
 	    composer bc-check -- --from=$$LATEST; \

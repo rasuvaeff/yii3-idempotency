@@ -119,7 +119,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
                 ttlSeconds: $this->ttlSeconds,
             ));
         } catch (\Throwable $throwable) {
-            $this->storage->release($key);
+            $this->releaseQuietly($key);
 
             throw $throwable;
         }
@@ -156,9 +156,25 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             // no renderer is configured at all.
         }
 
-        $this->storage->release($key);
+        $this->releaseQuietly($key);
 
         throw $throwable;
+    }
+
+    /**
+     * Releases a claim on a path that is already unwinding a failure.
+     *
+     * A cleanup that fails must not replace the throwable the caller needs to
+     * see: the claim is stuck either way until its TTL expires, and swapping in
+     * a storage error would only hide why the request failed.
+     */
+    private function releaseQuietly(IdempotencyKey $key): void
+    {
+        try {
+            $this->storage->release($key);
+        } catch (\Throwable) {
+            // deliberately swallowed — see above
+        }
     }
 
     /**

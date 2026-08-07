@@ -758,6 +758,52 @@ final class IdempotencyMiddlewareTest
         Assert::true($storage->claim(new IdempotencyKey('key-1'), new IdempotencyFingerprint('any')));
     }
 
+    public function failingReleaseDoesNotReplaceTheHandlerFailure(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: new FailingIdempotencyStorage(
+                inner: new InMemoryIdempotencyStorage($this->clock),
+                failOnStore: false,
+                failOnRelease: true,
+            ),
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+        );
+
+        try {
+            $middleware->process(
+                $this->keyedRequest(),
+                new FakeHandler(throwable: new FakeDomainException('payment declined')),
+            );
+            Assert::fail('Expected FakeDomainException');
+        } catch (FakeDomainException $exception) {
+            // the cleanup error must not surface in place of the reason the
+            // request failed — the caller can only act on the latter
+            Assert::same($exception->getMessage(), 'payment declined');
+        }
+    }
+
+    public function failingReleaseDoesNotReplaceTheStorageFailure(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: new FailingIdempotencyStorage(
+                inner: new InMemoryIdempotencyStorage($this->clock),
+                failOnRelease: true,
+            ),
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+        );
+
+        try {
+            $middleware->process($this->keyedRequest(), new FakeHandler());
+            Assert::fail('Expected RuntimeException');
+        } catch (\RuntimeException $exception) {
+            Assert::same($exception->getMessage(), 'storage is down');
+        }
+    }
+
     public function cachedDomainFailureStillDetectsAPayloadMismatch(): void
     {
         $middleware = $this->middlewareWith(renderer: new FakeDomainFailureRenderer());
