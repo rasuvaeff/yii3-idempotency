@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Failure classification and domain-failure caching: `FailureKind`,
+  `FailureClassifier`, `DefaultFailureClassifier`, the `RetryableFailure` marker
+  and `DomainFailureRenderer`. With a renderer configured, a thrown domain
+  failure is rendered, stored as an ordinary response snapshot and replayed on
+  retry instead of re-running the handler. Without one, nothing changes.
+- Key scoping: `IdempotencyScope`, `IdempotencyScopeResolver`,
+  `RequestTargetScopeResolver` and the `ScopedIdempotencyKeyExtractor`
+  decorator. The storage key becomes `sha256(scope . "\0" . key)`, so the same
+  key reused across endpoints no longer collides. Configurable via the new
+  `scope` param (`null` — global, `'auto'`, or an explicit name).
+- `PayloadIdempotencyKeyExtractor`: reads the key out of the parsed body by dot
+  path (`command.orderId`) for queue and command-bus consumers. An unresolvable
+  path throws the new `MissingKeyException` unless `required: false`.
+
 ## 1.1.1 — 2026-07-25
 
 - Reject trailing newlines in `IdempotencyKey`: anchor the validation pattern

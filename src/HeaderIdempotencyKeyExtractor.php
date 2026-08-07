@@ -9,10 +9,10 @@ use Psr\Http\Message\ServerRequestInterface;
 /**
  * @api
  */
-final class HeaderIdempotencyKeyExtractor implements IdempotencyKeyExtractor
+final readonly class HeaderIdempotencyKeyExtractor implements IdempotencyKeyExtractor
 {
     public function __construct(
-        private readonly string $headerName = 'Idempotency-Key',
+        private string $headerName = 'Idempotency-Key',
     ) {}
 
     #[\Override]

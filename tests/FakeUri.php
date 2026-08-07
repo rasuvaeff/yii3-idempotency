@@ -9,11 +9,11 @@ use Psr\Http\Message\UriInterface;
 /**
  * @internal
  */
-final class FakeUri implements UriInterface
+final readonly class FakeUri implements UriInterface
 {
     public function __construct(
-        private readonly string $path = '/',
-        private readonly string $query = '',
+        private string $path = '/',
+        private string $query = '',
     ) {}
 
     #[\Override]

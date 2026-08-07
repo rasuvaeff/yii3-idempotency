@@ -14,7 +14,7 @@ use Psr\Http\Server\RequestHandlerInterface;
 /**
  * @api
  */
-final class IdempotencyMiddleware implements MiddlewareInterface
+final readonly class IdempotencyMiddleware implements MiddlewareInterface
 {
     private const int MIN_TTL_SECONDS = 1;
 
@@ -25,25 +25,33 @@ final class IdempotencyMiddleware implements MiddlewareInterface
     /**
      * @var list<string>
      */
-    private readonly array $methods;
+    private array $methods;
+
+    private FailureClassifier $failureClassifier;
 
     /**
      * @param list<string> $methods HTTP methods idempotency applies to; others pass through untouched
+     * @param DomainFailureRenderer|null $domainFailureRenderer renders domain failures so they can be cached;
+     *                                                          `null` keeps every thrown failure retryable
+     * @param FailureClassifier|null $failureClassifier defaults to {@see DefaultFailureClassifier}
      */
     public function __construct(
-        private readonly IdempotencyKeyExtractor $keyExtractor,
-        private readonly IdempotencyStorage $storage,
-        private readonly ResponseFactoryInterface $responseFactory,
-        private readonly ClockInterface $clock,
-        private readonly IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
-        private readonly int $ttlSeconds = 3600,
+        private IdempotencyKeyExtractor $keyExtractor,
+        private IdempotencyStorage $storage,
+        private ResponseFactoryInterface $responseFactory,
+        private ClockInterface $clock,
+        private IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
+        private int $ttlSeconds = 3600,
         array $methods = ['POST', 'PUT', 'PATCH'],
+        private ?DomainFailureRenderer $domainFailureRenderer = null,
+        ?FailureClassifier $failureClassifier = null,
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
             throw new \InvalidArgumentException('TTL seconds must be greater than 0');
         }
 
         $this->methods = array_map(strtoupper(...), $methods);
+        $this->failureClassifier = $failureClassifier ?? new DefaultFailureClassifier();
     }
 
     #[\Override]
@@ -55,7 +63,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         $key = $this->keyExtractor->extract($request);
 
-        if ($key === null) {
+        if (!$key instanceof IdempotencyKey) {
             return match ($this->policy) {
                 IdempotencyPolicy::Reject => $this->responseFactory->createResponse(400),
                 IdempotencyPolicy::PassThrough => $handler->handle($request),
@@ -66,7 +74,7 @@ final class IdempotencyMiddleware implements MiddlewareInterface
 
         $existing = $this->storage->load($key);
 
-        if ($existing !== null) {
+        if ($existing instanceof IdempotencyRecord) {
             if (!$existing->fingerprint->equals($fingerprint)) {
                 return $this->payloadMismatchResponse();
             }
@@ -78,34 +86,131 @@ final class IdempotencyMiddleware implements MiddlewareInterface
             return $this->inProgressResponse();
         }
 
+        // Only what the handler itself throws is a candidate for classification;
+        // a storage failure below must never be mistaken for a domain outcome.
         try {
             $response = $handler->handle($request);
+        } catch (\Throwable $throwable) {
+            return $this->handleThrownFailure(
+                key: $key,
+                fingerprint: $fingerprint,
+                request: $request,
+                throwable: $throwable,
+            );
+        }
 
-            $status = $response->getStatusCode();
+        $status = $response->getStatusCode();
 
-            // Only successful (2xx) responses are cached. Anything else — redirects,
-            // client errors (incl. retryable 409/423/429), server errors — releases
-            // the claim so the request can be retried under the same key.
-            if ($status < self::SUCCESS_STATUS_MIN || $status >= self::SUCCESS_STATUS_MAX_EXCLUSIVE) {
-                $this->storage->release($key);
+        // Only successful (2xx) responses are cached. Anything else — redirects,
+        // client errors (incl. retryable 409/423/429), server errors — releases
+        // the claim so the request can be retried under the same key.
+        if ($status < self::SUCCESS_STATUS_MIN || $status >= self::SUCCESS_STATUS_MAX_EXCLUSIVE) {
+            $this->storage->release($key);
 
-                return $response;
-            }
+            return $response;
+        }
 
-            $record = IdempotencyRecord::create(
+        try {
+            $this->storage->store(IdempotencyRecord::create(
                 key: $key,
                 fingerprint: $fingerprint,
                 response: $this->captureResponse($response),
                 clock: $this->clock,
                 ttlSeconds: $this->ttlSeconds,
-            );
-
-            $this->storage->store($record);
+            ));
         } catch (\Throwable $throwable) {
-            $this->storage->release($key);
+            $this->releaseQuietly($key);
 
             throw $throwable;
         }
+
+        return $response;
+    }
+
+    /**
+     * Resolves a throwable raised by the handler: either a cached domain failure
+     * to return, or a released claim and the original throwable rethrown.
+     */
+    private function handleThrownFailure(
+        IdempotencyKey $key,
+        IdempotencyFingerprint $fingerprint,
+        ServerRequestInterface $request,
+        \Throwable $throwable,
+    ): ResponseInterface {
+        try {
+            $rendered = $this->cacheDomainFailure(
+                key: $key,
+                fingerprint: $fingerprint,
+                request: $request,
+                throwable: $throwable,
+            );
+
+            if ($rendered instanceof ResponseInterface) {
+                return $rendered;
+            }
+        } catch (\Throwable) {
+            // A classifier, renderer or storage that fails here must not strand
+            // the claim — that would answer every later request with 409 until
+            // the claim TTL expires, and forever in storage without one. Fall
+            // through to the retryable path, which is exactly what happens when
+            // no renderer is configured at all.
+        }
+
+        $this->releaseQuietly($key);
+
+        throw $throwable;
+    }
+
+    /**
+     * Releases a claim on a path that is already unwinding a failure.
+     *
+     * A cleanup that fails must not replace the throwable the caller needs to
+     * see: the claim is stuck either way until its TTL expires, and swapping in
+     * a storage error would only hide why the request failed.
+     */
+    private function releaseQuietly(IdempotencyKey $key): void
+    {
+        try {
+            $this->storage->release($key);
+        } catch (\Throwable) {
+            // deliberately swallowed — see above
+        }
+    }
+
+    /**
+     * Caches a deterministic domain failure as an ordinary response snapshot, so
+     * a retry under the same key replays it instead of re-running the handler.
+     *
+     * Returns `null` when the failure stays retryable — no renderer configured,
+     * a non-domain kind, or a renderer that declined it.
+     */
+    private function cacheDomainFailure(
+        IdempotencyKey $key,
+        IdempotencyFingerprint $fingerprint,
+        ServerRequestInterface $request,
+        \Throwable $throwable,
+    ): ?ResponseInterface {
+        if (!$this->domainFailureRenderer instanceof DomainFailureRenderer) {
+            return null;
+        }
+
+        if ($this->failureClassifier->classify($throwable) !== FailureKind::Domain) {
+            return null;
+        }
+
+        $response = $this->domainFailureRenderer->render($throwable, $request);
+
+        if (!$response instanceof ResponseInterface) {
+            return null;
+        }
+
+        $this->storage->store(IdempotencyRecord::create(
+            key: $key,
+            fingerprint: $fingerprint,
+            response: $this->captureResponse($response),
+            clock: $this->clock,
+            ttlSeconds: $this->ttlSeconds,
+        ));
 
         return $response;
     }

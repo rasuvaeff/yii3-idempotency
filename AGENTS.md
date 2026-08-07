@@ -11,7 +11,10 @@ payload, same key), and TTL-based expiration.
 Namespace: `Rasuvaeff\Yii3Idempotency`.
 Public API: `IdempotencyMiddleware`, `IdempotencyKey`, `IdempotencyFingerprint`, `IdempotencyRecord`,
 `IdempotencyResponse`, `IdempotencyStorage`, `InMemoryIdempotencyStorage`,
-`HeaderIdempotencyKeyExtractor`, `IdempotencyPolicy`.
+`HeaderIdempotencyKeyExtractor`, `PayloadIdempotencyKeyExtractor`,
+`ScopedIdempotencyKeyExtractor`, `IdempotencyScope`, `IdempotencyScopeResolver`,
+`RequestTargetScopeResolver`, `IdempotencyPolicy`, `FailureKind`, `FailureClassifier`,
+`DefaultFailureClassifier`, `RetryableFailure`, `DomainFailureRenderer`, `MissingKeyException`.
 
 ## Golden rules
 
@@ -59,6 +62,26 @@ make release-check
 - Only 2xx handler responses are cached; any non-2xx (3xx/4xx — incl. retryable
   409/423/429 — and 5xx) releases the claim instead, so transient failures stay
   retryable under the same key.
+- Thrown failures are cached only when a `DomainFailureRenderer` is configured
+  **and** the `FailureClassifier` returns `FailureKind::Domain`. The cached
+  outcome is an ordinary `IdempotencyResponse` snapshot — no storage schema
+  change, no new `IdempotencyRecord` field, so `-db` is unaffected. Everything
+  else (`\Error`, `RetryableFailure`, `Bug` overrides, a renderer returning
+  `null`) releases the claim and rethrows.
+- **A claim must never outlive the request that took it.** Only what the handler
+  throws is classified; a storage failure is never mistaken for a domain outcome,
+  and any failure inside the caching path (classifier, renderer, `store()`) is
+  caught, the claim released and the *original* throwable rethrown. Otherwise a
+  broken renderer answers every later request under that key with 409 until the
+  claim TTL expires — and forever in a storage without one.
+- Scoping lives in the extractor, not the middleware: `ScopedIdempotencyKeyExtractor`
+  rewrites the key to `sha256(scope . "\0" . key)`. Hashing rather than prefixing
+  is deliberate — a prefix would push a 250-char client key past the 255-char
+  limit and reject a request that used to work. Do not "improve" it into a
+  readable prefix without solving that.
+- `PayloadIdempotencyKeyExtractor` throws `MissingKeyException` from `extract()`,
+  which runs *before* the claim and outside the middleware's try block — there is
+  nothing to release and the classifier never sees it. Keep it that way.
 - Idempotency applies only to the configured `methods` (default POST/PUT/PATCH,
   normalized to upper-case); other methods pass through before any key/claim work.
   Configurable via the `methods` constructor arg / `methods` param.

@@ -1,5 +1,6 @@
 DOCKER := docker run --rm -v "$(PWD)":/app -w /app composer:2
 DOCKER_HOST := docker run --rm --network host -v "$(PWD)":/app -w /app
+SAFE_DIR := git config --global --add safe.directory /app && git config --global --add safe.directory /app/.git
 PCOV_BOOTSTRAP := apk add --no-cache $$PHPIZE_DEPS >/dev/null && pecl install pcov >/dev/null && docker-php-ext-enable pcov
 
 .PHONY: bench build cs cs-fix psalm test mutation rector rector-fix install normalize require-checker \
@@ -50,12 +51,16 @@ require-checker:
 update-deps:
 	$(DOCKER) sh -c 'git config --global --add safe.directory /app; composer update -q; composer normalize'
 
+# composer's release-check chain ends in bc-check, which shells out to git —
+# without safe.directory the container's git refuses the bind-mounted repo
+# ("dubious ownership") and the whole target dies with exit 128. Both paths are
+# needed: roave clones the worktree, and git resolves that through /app/.git.
 release-check:
-	$(DOCKER) composer release-check
+	$(DOCKER) sh -c '$(SAFE_DIR) && composer release-check'
 	$(MAKE) mutation
 
 bc-check:
-	$(DOCKER) sh -c 'git config --global --add safe.directory /app; \
+	$(DOCKER) sh -c '$(SAFE_DIR) && \
 	  LATEST=$$(git describe --tags --abbrev=0 2>/dev/null || true); \
 	  if [ -n "$$LATEST" ]; then \
 	    composer bc-check -- --from=$$LATEST; \

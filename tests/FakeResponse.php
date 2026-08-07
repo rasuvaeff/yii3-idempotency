@@ -13,13 +13,11 @@ use Psr\Http\Message\StreamInterface;
 final class FakeResponse implements ResponseInterface
 {
     private FakeStream $stream;
-    private int $statusCode;
     /** @var array<string, list<string>> */
     private array $headers = [];
 
-    public function __construct(int $statusCode = 200)
+    public function __construct(private int $statusCode = 200)
     {
-        $this->statusCode = $statusCode;
         $this->stream = new FakeStream();
     }
 
