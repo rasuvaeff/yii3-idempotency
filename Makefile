@@ -50,12 +50,15 @@ require-checker:
 update-deps:
 	$(DOCKER) sh -c 'git config --global --add safe.directory /app; composer update -q; composer normalize'
 
+# composer's release-check chain ends in bc-check, which shells out to git —
+# without safe.directory the container's git refuses the bind-mounted repo
+# ("dubious ownership") and the whole target dies with exit 128
 release-check:
-	$(DOCKER) composer release-check
+	$(DOCKER) sh -c 'git config --global --add safe.directory "*"; composer release-check'
 	$(MAKE) mutation
 
 bc-check:
-	$(DOCKER) sh -c 'git config --global --add safe.directory /app; \
+	$(DOCKER) sh -c 'git config --global --add safe.directory "*"; \
 	  LATEST=$$(git describe --tags --abbrev=0 2>/dev/null || true); \
 	  if [ -n "$$LATEST" ]; then \
 	    composer bc-check -- --from=$$LATEST; \
