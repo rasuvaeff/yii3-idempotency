@@ -11,10 +11,16 @@
         "configDir": "."
     },
     "testFramework": "testo",
-    // ~98.7% is the honest ceiling. Both survivors are equivalent mutants:
+    // ~98.2% is the honest ceiling. All three survivors are equivalent mutants:
     //   - `(string) $name` cast on already-string header keys (redundant);
     //   - `InMemoryIdempotencyStorage` `$claims[$key] = true` — only `isset()` is
-    //     read, so the stored value is irrelevant.
+    //     read, so the stored value is irrelevant;
+    //   - `ReturnRemoval` on the "renderer declined" guard in `cacheDomainFailure()`.
+    //     Falling through hands `null` to `captureResponse()`, which raises a
+    //     `TypeError` that `handleThrownFailure()` catches — releasing the claim
+    //     and rethrowing the original failure, byte for byte what the guard does.
+    //     Unobservable by design: that catch exists precisely so no failure in the
+    //     caching path can change the outcome.
     "minMsi": 98,
     "mutators": {
         "@default": true

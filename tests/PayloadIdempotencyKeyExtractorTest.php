@@ -86,6 +86,19 @@ final class PayloadIdempotencyKeyExtractorTest
         yield 'value is a float' => [['command' => ['orderId' => 1.5]]];
         yield 'value is a bool' => [['command' => ['orderId' => true]]];
         yield 'value is an array' => [['command' => ['orderId' => ['nested']]]];
+        yield 'value is an empty string' => [['command' => ['orderId' => '']]];
+    }
+
+    /**
+     * An empty value must behave like an absent one, exactly as
+     * {@see \Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor} treats an
+     * empty header — not as a key-format violation.
+     */
+    public function emptyValueIsTreatedAsAbsentRatherThanInvalid(): void
+    {
+        $extractor = new PayloadIdempotencyKeyExtractor('id', required: false);
+
+        Assert::null($extractor->extract(new FakeRequest(parsedBody: ['id' => ''])));
     }
 
     public function propagatesTheKeyFormatError(): void

@@ -29,9 +29,12 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
 
    The one exception is opt-in and applies to *thrown* failures only: with a
    `DomainFailureRenderer` configured, a throwable the `FailureClassifier` calls
-   `FailureKind::Domain` is rendered, stored and replayed for the whole TTL.
+   `FailureKind::Domain` is rendered, stored and replayed for the whole TTL —
+   but only if the renderer actually returns a `ResponseInterface`. A renderer
+   returning `null` declines the failure, and a renderer that throws is treated
+   the same way: the claim is released and the original throwable is rethrown.
    `\Error`, anything implementing `RetryableFailure`, and anything overridden
-   as `Bug` still release the claim. Classify conservatively — a transient
+   as `Bug` also release the claim. Classify conservatively — a transient
    failure mislabelled `Domain` is pinned until the record expires.
 
 3. **Conflict semantics are fixed contract.** Same key + different payload
@@ -41,7 +44,10 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
 
    Keys are global unless a `ScopedIdempotencyKeyExtractor` is wired in, which
    makes the storage key `sha256(scope . "\0" . key)` — a fixed 64 chars, so
-   scoped records are opaque and cannot collide across endpoints.
+   scoped records are opaque. Records are separated exactly as far as scope
+   names differ: use `RequestTargetScopeResolver` for per-endpoint isolation,
+   since any resolver returning one name for two endpoints still shares one
+   namespace (which is the point of an explicit scope).
 
 4. **Storage claim must be atomic.** `IdempotencyStorage::claim()` is a
    compare-and-set; the `-db` backend implements it atomically.

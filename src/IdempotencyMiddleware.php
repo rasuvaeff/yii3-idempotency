@@ -86,30 +86,58 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             return $this->inProgressResponse();
         }
 
+        // Only what the handler itself throws is a candidate for classification;
+        // a storage failure below must never be mistaken for a domain outcome.
         try {
             $response = $handler->handle($request);
+        } catch (\Throwable $throwable) {
+            return $this->handleThrownFailure(
+                key: $key,
+                fingerprint: $fingerprint,
+                request: $request,
+                throwable: $throwable,
+            );
+        }
 
-            $status = $response->getStatusCode();
+        $status = $response->getStatusCode();
 
-            // Only successful (2xx) responses are cached. Anything else — redirects,
-            // client errors (incl. retryable 409/423/429), server errors — releases
-            // the claim so the request can be retried under the same key.
-            if ($status < self::SUCCESS_STATUS_MIN || $status >= self::SUCCESS_STATUS_MAX_EXCLUSIVE) {
-                $this->storage->release($key);
+        // Only successful (2xx) responses are cached. Anything else — redirects,
+        // client errors (incl. retryable 409/423/429), server errors — releases
+        // the claim so the request can be retried under the same key.
+        if ($status < self::SUCCESS_STATUS_MIN || $status >= self::SUCCESS_STATUS_MAX_EXCLUSIVE) {
+            $this->storage->release($key);
 
-                return $response;
-            }
+            return $response;
+        }
 
-            $record = IdempotencyRecord::create(
+        try {
+            $this->storage->store(IdempotencyRecord::create(
                 key: $key,
                 fingerprint: $fingerprint,
                 response: $this->captureResponse($response),
                 clock: $this->clock,
                 ttlSeconds: $this->ttlSeconds,
-            );
-
-            $this->storage->store($record);
+            ));
         } catch (\Throwable $throwable) {
+            $this->storage->release($key);
+
+            throw $throwable;
+        }
+
+        return $response;
+    }
+
+    /**
+     * Resolves a throwable raised by the handler: either a cached domain failure
+     * to return, or a released claim and the original throwable rethrown.
+     */
+    private function handleThrownFailure(
+        IdempotencyKey $key,
+        IdempotencyFingerprint $fingerprint,
+        ServerRequestInterface $request,
+        \Throwable $throwable,
+    ): ResponseInterface {
+        try {
             $rendered = $this->cacheDomainFailure(
                 key: $key,
                 fingerprint: $fingerprint,
@@ -120,13 +148,17 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             if ($rendered instanceof ResponseInterface) {
                 return $rendered;
             }
-
-            $this->storage->release($key);
-
-            throw $throwable;
+        } catch (\Throwable) {
+            // A classifier, renderer or storage that fails here must not strand
+            // the claim — that would answer every later request with 409 until
+            // the claim TTL expires, and forever in storage without one. Fall
+            // through to the retryable path, which is exactly what happens when
+            // no renderer is configured at all.
         }
 
-        return $response;
+        $this->storage->release($key);
+
+        throw $throwable;
     }
 
     /**

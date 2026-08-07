@@ -68,6 +68,12 @@ make release-check
   change, no new `IdempotencyRecord` field, so `-db` is unaffected. Everything
   else (`\Error`, `RetryableFailure`, `Bug` overrides, a renderer returning
   `null`) releases the claim and rethrows.
+- **A claim must never outlive the request that took it.** Only what the handler
+  throws is classified; a storage failure is never mistaken for a domain outcome,
+  and any failure inside the caching path (classifier, renderer, `store()`) is
+  caught, the claim released and the *original* throwable rethrown. Otherwise a
+  broken renderer answers every later request under that key with 409 until the
+  claim TTL expires — and forever in a storage without one.
 - Scoping lives in the extractor, not the middleware: `ScopedIdempotencyKeyExtractor`
   rewrites the key to `sha256(scope . "\0" . key)`. Hashing rather than prefixing
   is deliberate — a prefix would push a 250-char client key past the 255-char

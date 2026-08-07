@@ -39,7 +39,9 @@ foreach ($failures as $label => $failure) {
     $kind = $classifier->classify($failure);
 
     echo str_pad($label, 26) . ' => ' . str_pad($kind->name, 15)
-        . ($kind === FailureKind::Domain ? 'cached and replayed' : 'claim released, retryable') . "\n";
+        . ($kind === FailureKind::Domain
+            ? 'cacheable — needs a renderer that returns a response'
+            : 'claim released, original throwable rethrown') . "\n";
 }
 
 echo "\n== Payload keys ==\n";

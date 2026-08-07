@@ -179,5 +179,6 @@ return [
 ];
 ```
 
-`DomainFailureRenderer` and `FailureClassifier` have no default DI binding — wire them
-in the application when domain-failure caching is wanted.
+`DomainFailureRenderer` has no default DI binding — wiring one in the application is
+what enables domain-failure caching. `FailureClassifier` is optional: the middleware
+falls back to `DefaultFailureClassifier` when it is null.

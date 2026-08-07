@@ -18,12 +18,17 @@ final class FakeDomainFailureRenderer implements DomainFailureRenderer
     public function __construct(
         private readonly int $statusCode = 422,
         private readonly bool $declines = false,
+        private readonly bool $throws = false,
     ) {}
 
     #[\Override]
     public function render(\Throwable $failure, ServerRequestInterface $request): ?ResponseInterface
     {
         $this->callCount++;
+
+        if ($this->throws) {
+            throw new \RuntimeException('renderer is broken');
+        }
 
         if ($this->declines) {
             return null;

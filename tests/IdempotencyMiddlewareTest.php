@@ -9,8 +9,10 @@ use Rasuvaeff\PropertyTesting\ArbitraryInterface;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
 use Rasuvaeff\Yii3Idempotency\DefaultFailureClassifier;
+use Rasuvaeff\Yii3Idempotency\FailureClassifier;
 use Rasuvaeff\Yii3Idempotency\FailureKind;
 use Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor;
+use Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\IdempotencyPolicy;
@@ -674,6 +676,88 @@ final class IdempotencyMiddlewareTest
         Assert::null($this->storage->load(new IdempotencyKey('key-1')));
     }
 
+    public function classifierIsNotConsultedWithoutARenderer(): void
+    {
+        $classifier = new CountingFailureClassifier();
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            failureClassifier: $classifier,
+        );
+
+        try {
+            $middleware->process($this->keyedRequest(), new FakeHandler(throwable: new FakeDomainException('x')));
+            Assert::fail('Expected FakeDomainException');
+        } catch (FakeDomainException) {
+            Assert::true(true);
+        }
+
+        Assert::same($classifier->getCallCount(), 0);
+    }
+
+    public function brokenRendererReleasesTheClaimAndRethrowsTheOriginalFailure(): void
+    {
+        $middleware = $this->middlewareWith(renderer: new FakeDomainFailureRenderer(throws: true));
+        $request = $this->keyedRequest();
+
+        try {
+            $middleware->process($request, new FakeHandler(throwable: new FakeDomainException('declined')));
+            Assert::fail('Expected FakeDomainException');
+        } catch (FakeDomainException $exception) {
+            Assert::same($exception->getMessage(), 'declined');
+        }
+
+        // the claim must not outlive the failed caching attempt, or every later
+        // request under this key answers 409 until the claim TTL expires
+        $retry = $middleware->process($request, new FakeHandler());
+
+        Assert::same($retry->getStatusCode(), 200);
+    }
+
+    public function storageFailureWhileCachingADomainFailureReleasesTheClaim(): void
+    {
+        $storage = new FailingIdempotencyStorage(new InMemoryIdempotencyStorage($this->clock));
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            domainFailureRenderer: new FakeDomainFailureRenderer(),
+        );
+        $request = $this->keyedRequest();
+
+        try {
+            $middleware->process($request, new FakeHandler(throwable: new FakeDomainException('declined')));
+            Assert::fail('Expected FakeDomainException');
+        } catch (FakeDomainException $exception) {
+            Assert::same($exception->getMessage(), 'declined');
+        }
+
+        Assert::true($storage->claim(new IdempotencyKey('key-1'), new IdempotencyFingerprint('any')));
+    }
+
+    public function storageFailureOnASuccessfulResponseReleasesTheClaim(): void
+    {
+        $storage = new FailingIdempotencyStorage(new InMemoryIdempotencyStorage($this->clock));
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+        );
+
+        try {
+            $middleware->process($this->keyedRequest(), new FakeHandler());
+            Assert::fail('Expected RuntimeException');
+        } catch (\RuntimeException $exception) {
+            Assert::same($exception->getMessage(), 'storage is down');
+        }
+
+        Assert::true($storage->claim(new IdempotencyKey('key-1'), new IdempotencyFingerprint('any')));
+    }
+
     public function cachedDomainFailureStillDetectsAPayloadMismatch(): void
     {
         $middleware = $this->middlewareWith(renderer: new FakeDomainFailureRenderer());
@@ -726,7 +810,7 @@ final class IdempotencyMiddlewareTest
 
     private function middlewareWith(
         FakeDomainFailureRenderer $renderer,
-        ?DefaultFailureClassifier $classifier = null,
+        ?FailureClassifier $classifier = null,
     ): IdempotencyMiddleware {
         return new IdempotencyMiddleware(
             keyExtractor: $this->extractor,

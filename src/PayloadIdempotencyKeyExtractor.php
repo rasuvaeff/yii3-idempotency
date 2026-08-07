@@ -75,8 +75,11 @@ final readonly class PayloadIdempotencyKeyExtractor implements IdempotencyKeyExt
             $current = $current[$segment];
         }
 
+        // An empty value counts as absent, matching HeaderIdempotencyKeyExtractor:
+        // otherwise `required: false` would throw out of the key format instead of
+        // handing the request to the middleware policy.
         if (\is_string($current)) {
-            return $current;
+            return $current === '' ? null : $current;
         }
 
         if (\is_int($current)) {

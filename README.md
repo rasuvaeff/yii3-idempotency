@@ -166,9 +166,10 @@ return [
 ];
 ```
 
-`DomainFailureRenderer` and `FailureClassifier` have no default binding — they
-are application concerns. Wire them in your own `config/common/di/*.php` when you
-want domain-failure caching.
+`DomainFailureRenderer` has no default binding — it is an application concern, and
+wiring one in your own `config/common/di/*.php` is what turns domain-failure
+caching on. `FailureClassifier` needs wiring only to override
+`DefaultFailureClassifier`, which the middleware falls back to on its own.
 
 ## Public API
 
@@ -200,7 +201,7 @@ want domain-failure caching.
 
 - Fingerprint includes method, path, query string, and body — prevents payload substitution
 - Request body stream is rewound after fingerprinting — handlers can re-read it
-- Only 2xx responses are cached; non-2xx (incl. retryable 409/423/429 and any 5xx) release the claim, so a transient failure cannot be replayed for the whole TTL
+- Only 2xx responses **returned by the handler** are cached; non-2xx (incl. retryable 409/423/429 and any 5xx) release the claim, so a transient failure cannot be replayed for the whole TTL. A rendered domain failure is the one deliberate exception and is cached at whatever status the renderer chose
 - Thrown failures are cached only when you configure a `DomainFailureRenderer` **and** the classifier calls them `Domain`. `\Error`, anything marked `RetryableFailure`, and anything you override as `Bug` always release the claim — a transient failure still cannot be pinned for the whole TTL. Classify conservatively: a failure cached as `Domain` is replayed until the record expires
 - Scoping hashes the client key together with the scope, so a scope name is never echoed back and a long key cannot be pushed past the length limit
 - Idempotency applies only to the configured `methods` (default POST/PUT/PATCH) — safe methods pass through
