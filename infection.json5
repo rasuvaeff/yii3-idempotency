@@ -11,13 +11,11 @@
         "configDir": "."
     },
     "testFramework": "testo",
-    // ~91% is the honest ceiling. Survivors are low-value or equivalent:
-    //   - `ttlSeconds = 3600` default int (only a long-lived stored record would pin it);
+    // ~98.7% is the honest ceiling. Both survivors are equivalent mutants:
     //   - `(string) $name` cast on already-string header keys (redundant);
-    //   - `InMemoryIdempotencyStorage` `$claims[$key] = true` — only `isset()` is read,
-    //     so the stored value is irrelevant (equivalent);
-    //   - the `isSeekable()` guard / `rewind()` on the captured response body.
-    "minMsi": 90,
+    //   - `InMemoryIdempotencyStorage` `$claims[$key] = true` — only `isset()` is
+    //     read, so the stored value is irrelevant.
+    "minMsi": 98,
     "mutators": {
         "@default": true
     }

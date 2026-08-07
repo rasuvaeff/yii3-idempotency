@@ -535,6 +535,49 @@ final class IdempotencyMiddlewareTest
         Assert::same($response->getStatusCode(), 200);
     }
 
+    public function replayRestoresEveryCapturedHeader(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $handler = new class implements \Psr\Http\Server\RequestHandlerInterface {
+            #[\Override]
+            public function handle(
+                \Psr\Http\Message\ServerRequestInterface $request,
+            ): \Psr\Http\Message\ResponseInterface {
+                $response = new FakeResponse(201);
+                $response = $response->withHeader(name: 'Content-Type', value: 'application/json');
+                $response = $response->withHeader(name: 'Location', value: '/orders/1');
+
+                return $response->withHeader(name: 'X-Trace', value: 'abc');
+            }
+        };
+
+        $this->middleware->process($request, $handler);
+        $replay = $this->middleware->process($request, new FakeHandler());
+
+        Assert::same($replay->getHeader('Content-Type'), ['application/json']);
+        Assert::same($replay->getHeader('Location'), ['/orders/1']);
+        Assert::same($replay->getHeader('X-Trace'), ['abc']);
+    }
+
+    public function lowerCaseRequestMethodIsStillIdempotent(): void
+    {
+        $request = new FakeRequest(
+            method: 'post',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $handler = new FakeHandler();
+
+        $first = $this->middleware->process($request, $handler);
+        $replay = $this->middleware->process($request, $handler);
+
+        Assert::same($first->getStatusCode(), 200);
+        Assert::same($replay->getStatusCode(), 200);
+        Assert::same($handler->getCallCount(), 1);
+    }
+
     public function domainFailureIsRenderedCachedAndReplayed(): void
     {
         $renderer = new FakeDomainFailureRenderer();
