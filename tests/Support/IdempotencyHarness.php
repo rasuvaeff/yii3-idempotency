@@ -66,7 +66,7 @@ final readonly class IdempotencyHarness
 
     public function loaded(int $index): bool
     {
-        return $this->storage->load($this->keys[$index]) instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyRecord;
+        return $this->storage->load($this->keys[$index]) instanceof IdempotencyRecord;
     }
 
     /**

@@ -63,7 +63,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
 
         $key = $this->keyExtractor->extract($request);
 
-        if (!$key instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyKey) {
+        if (!$key instanceof IdempotencyKey) {
             return match ($this->policy) {
                 IdempotencyPolicy::Reject => $this->responseFactory->createResponse(400),
                 IdempotencyPolicy::PassThrough => $handler->handle($request),
@@ -74,7 +74,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
 
         $existing = $this->storage->load($key);
 
-        if ($existing instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyRecord) {
+        if ($existing instanceof IdempotencyRecord) {
             if (!$existing->fingerprint->equals($fingerprint)) {
                 return $this->payloadMismatchResponse();
             }
@@ -117,7 +117,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
                 throwable: $throwable,
             );
 
-            if ($rendered instanceof \Psr\Http\Message\ResponseInterface) {
+            if ($rendered instanceof ResponseInterface) {
                 return $rendered;
             }
 
@@ -142,7 +142,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         ServerRequestInterface $request,
         \Throwable $throwable,
     ): ?ResponseInterface {
-        if (!$this->domainFailureRenderer instanceof \Rasuvaeff\Yii3Idempotency\DomainFailureRenderer) {
+        if (!$this->domainFailureRenderer instanceof DomainFailureRenderer) {
             return null;
         }
 
@@ -152,7 +152,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
 
         $response = $this->domainFailureRenderer->render($throwable, $request);
 
-        if (!$response instanceof \Psr\Http\Message\ResponseInterface) {
+        if (!$response instanceof ResponseInterface) {
             return null;
         }
 
