@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
 use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Classify;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
 use Rasuvaeff\PropertyTesting\StateMachine\CommandSequence;
@@ -124,10 +125,24 @@ final class InMemoryIdempotencyStorageTest
      * the claim, never the record. Keys 0-2 are exercised; an untouched key must
      * stay empty. This reaches interactions the isolated tests above do not.
      */
-    #[Property(runs: 300)]
+    #[Property(runs: 300, timeoutMs: 2000)]
     public function claimStoreReleaseTrackTheModel(CommandSequence $sequence): void
     {
         $harness = new IdempotencyHarness(4);
+
+        $kinds = [];
+
+        foreach ($sequence->commands as $command) {
+            $kinds[$command::class] = true;
+        }
+
+        // The two runs an idempotency store has to survive are a claim that is
+        // never released (a crashed request holding the mutex) and a claim that
+        // is released without ever storing a response. Drawn uniformly from
+        // three commands, neither shape occurs.
+        Classify::cover($kinds !== [] && !isset($kinds[ReleaseCommand::class]), 'nothing ever released', 15.0);
+        Classify::cover($kinds !== [] && !isset($kinds[StoreCommand::class]), 'nothing ever stored', 15.0);
+        Classify::cover(\count($kinds) === 3, 'all three commands present', 5.0);
 
         StateMachine::check($sequence, static fn(): IdempotencyHarness => $harness);
 
@@ -140,11 +155,14 @@ final class InMemoryIdempotencyStorageTest
     {
         $initialModel = ['claimed' => [false, false, false], 'stored' => [false, false, false]];
 
-        return ['sequence' => Gen::commands($initialModel, [
+        // Swarmed: each sequence may use only a subset of the three commands.
+        // minLength stays at the default 0, so a subset from which nothing
+        // applies yields an empty sequence rather than GenerationExhausted.
+        return ['sequence' => Gen::swarm(Gen::commands($initialModel, [
             Gen::map(Gen::intBetween(0, 2), static fn(int $index): ClaimCommand => new ClaimCommand($index)),
             Gen::map(Gen::intBetween(0, 2), static fn(int $index): StoreCommand => new StoreCommand($index)),
             Gen::map(Gen::intBetween(0, 2), static fn(int $index): ReleaseCommand => new ReleaseCommand($index)),
-        ])];
+        ]))];
     }
 
     private function createRecord(IdempotencyKey $key, int $ttlSeconds = 3600): IdempotencyRecord

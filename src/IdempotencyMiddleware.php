@@ -57,7 +57,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        if (!\in_array(strtoupper($request->getMethod()), $this->methods, true)) {
+        if (!\in_array(strtoupper($request->getMethod()), $this->methods, strict: true)) {
             return $handler->handle($request);
         }
 

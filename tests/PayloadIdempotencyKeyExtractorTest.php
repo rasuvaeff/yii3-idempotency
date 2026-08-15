@@ -109,7 +109,7 @@ final class PayloadIdempotencyKeyExtractorTest
             $extractor->extract(new FakeRequest(parsedBody: ['id' => 'not a valid key']));
             Assert::fail('Expected \InvalidArgumentException');
         } catch (\InvalidArgumentException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
     }
 

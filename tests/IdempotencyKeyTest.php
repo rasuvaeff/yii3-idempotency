@@ -85,7 +85,7 @@ final class IdempotencyKeyTest
             new IdempotencyKey($value);
             Assert::fail('Expected \InvalidArgumentException');
         } catch (\InvalidArgumentException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
     }
 

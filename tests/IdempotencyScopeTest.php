@@ -48,7 +48,7 @@ final class IdempotencyScopeTest
             new IdempotencyScope($name);
             Assert::fail('Expected \InvalidArgumentException');
         } catch (\InvalidArgumentException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
     }
 
