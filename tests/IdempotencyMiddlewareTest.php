@@ -66,7 +66,7 @@ final class IdempotencyMiddlewareTest
             );
             Assert::fail('Expected \InvalidArgumentException');
         } catch (\InvalidArgumentException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
     }
 
@@ -635,7 +635,7 @@ final class IdempotencyMiddlewareTest
             $middleware->process($request, new FakeHandler(throwable: new FakeDomainException('bug')));
             Assert::fail('Expected FakeDomainException');
         } catch (FakeDomainException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
 
         Assert::null($this->storage->load(new IdempotencyKey('key-1')));
@@ -651,7 +651,7 @@ final class IdempotencyMiddlewareTest
             $middleware->process($request, new FakeHandler(throwable: new FakeDomainException('declined')));
             Assert::fail('Expected FakeDomainException');
         } catch (FakeDomainException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
 
         Assert::same($renderer->getCallCount(), 1);
@@ -670,7 +670,7 @@ final class IdempotencyMiddlewareTest
             $this->middleware->process($request, new FakeHandler(throwable: new FakeDomainException('declined')));
             Assert::fail('Expected FakeDomainException');
         } catch (FakeDomainException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
 
         Assert::null($this->storage->load(new IdempotencyKey('key-1')));
@@ -691,7 +691,7 @@ final class IdempotencyMiddlewareTest
             $middleware->process($this->keyedRequest(), new FakeHandler(throwable: new FakeDomainException('x')));
             Assert::fail('Expected FakeDomainException');
         } catch (FakeDomainException) {
-            Assert::true(true);
+            Assert::true(actual: true);
         }
 
         Assert::same($classifier->getCallCount(), 0);

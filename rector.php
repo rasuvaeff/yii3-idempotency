@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Rasuvaeff\RectorNamedLiterals\AddNameToLiteralArgumentRector;
 use Rector\Config\RectorConfig;
 use Rector\DeadCode\Rector\ClassMethod\RemoveUnusedPrivateMethodParameterRector;
 
@@ -20,4 +21,5 @@ return RectorConfig::configure()
         RemoveUnusedPrivateMethodParameterRector::class => [
             __DIR__ . '/tests/Integration/ConfigWiringTest.php',
         ],
-    ]);
+    ])
+    ->withRules([AddNameToLiteralArgumentRector::class]);
