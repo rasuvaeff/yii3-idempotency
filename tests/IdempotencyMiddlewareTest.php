@@ -8,6 +8,7 @@ use Psr\Http\Server\MiddlewareInterface;
 use Rasuvaeff\PropertyTesting\ArbitraryInterface;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
+use Rasuvaeff\Yii3Idempotency\CompositeScopeResolver;
 use Rasuvaeff\Yii3Idempotency\DefaultFailureClassifier;
 use Rasuvaeff\Yii3Idempotency\FailureClassifier;
 use Rasuvaeff\Yii3Idempotency\FailureKind;
@@ -17,6 +18,11 @@ use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\IdempotencyPolicy;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
+use Rasuvaeff\Yii3Idempotency\MissingKeyException;
+use Rasuvaeff\Yii3Idempotency\PayloadIdempotencyKeyExtractor;
+use Rasuvaeff\Yii3Idempotency\RequestAttributeScopeResolver;
+use Rasuvaeff\Yii3Idempotency\RequestTargetScopeResolver;
+use Rasuvaeff\Yii3Idempotency\SharedKeyspaceScopeResolver;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Lifecycle\BeforeTest;
@@ -45,6 +51,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             ttlSeconds: 3600,
         );
     }
@@ -62,6 +69,7 @@ final class IdempotencyMiddlewareTest
                 storage: $this->storage,
                 responseFactory: new FakeResponseFactory(),
                 clock: $this->clock,
+                scopeResolver: new SharedKeyspaceScopeResolver(),
                 ttlSeconds: 0,
             );
             Assert::fail('Expected \InvalidArgumentException');
@@ -77,6 +85,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             ttlSeconds: 1,
         );
 
@@ -101,6 +110,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             policy: IdempotencyPolicy::Reject,
         );
 
@@ -197,6 +207,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             methods: ['delete'],
         );
         $request = new FakeRequest(method: 'DELETE', path: '/api/users/1', headers: ['idempotency-key' => ['k']]);
@@ -272,6 +283,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             ttlSeconds: 60,
         );
 
@@ -391,6 +403,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             ttlSeconds: 60,
         );
 
@@ -421,7 +434,7 @@ final class IdempotencyMiddlewareTest
 
         $this->middleware->process($request, $handler);
 
-        $record = $this->storage->load(new IdempotencyKey('key-1'));
+        $record = $this->storage->load($this->storageKey('key-1'));
 
         Assert::notNull($record);
         Assert::same($record->response->statusCode, 201);
@@ -436,8 +449,8 @@ final class IdempotencyMiddlewareTest
         );
 
         $this->storage->claim(
-            new IdempotencyKey('key-1'),
-            \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint::fromRequest($request),
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
         );
 
         $handler = new FakeHandler();
@@ -459,7 +472,7 @@ final class IdempotencyMiddlewareTest
         $response = $this->middleware->process($request, $handler);
 
         Assert::same($response->getStatusCode(), 500);
-        Assert::null($this->storage->load(new IdempotencyKey('key-1')));
+        Assert::null($this->storage->load($this->storageKey('key-1')));
 
         $retry = $this->middleware->process($request, new FakeHandler(responseStatus: 201));
 
@@ -616,7 +629,7 @@ final class IdempotencyMiddlewareTest
         }
 
         Assert::same($renderer->getCallCount(), 0);
-        Assert::null($this->storage->load(new IdempotencyKey('key-1')));
+        Assert::null($this->storage->load($this->storageKey('key-1')));
 
         $retry = $middleware->process($request, new FakeHandler());
 
@@ -638,7 +651,7 @@ final class IdempotencyMiddlewareTest
             Assert::true(actual: true);
         }
 
-        Assert::null($this->storage->load(new IdempotencyKey('key-1')));
+        Assert::null($this->storage->load($this->storageKey('key-1')));
     }
 
     public function declinedDomainFailureStaysRetryable(): void
@@ -655,7 +668,7 @@ final class IdempotencyMiddlewareTest
         }
 
         Assert::same($renderer->getCallCount(), 1);
-        Assert::null($this->storage->load(new IdempotencyKey('key-1')));
+        Assert::null($this->storage->load($this->storageKey('key-1')));
 
         $retry = $middleware->process($request, new FakeHandler());
 
@@ -673,7 +686,7 @@ final class IdempotencyMiddlewareTest
             Assert::true(actual: true);
         }
 
-        Assert::null($this->storage->load(new IdempotencyKey('key-1')));
+        Assert::null($this->storage->load($this->storageKey('key-1')));
     }
 
     public function classifierIsNotConsultedWithoutARenderer(): void
@@ -684,6 +697,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             failureClassifier: $classifier,
         );
 
@@ -724,6 +738,7 @@ final class IdempotencyMiddlewareTest
             storage: $storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             domainFailureRenderer: new FakeDomainFailureRenderer(),
         );
         $request = $this->keyedRequest();
@@ -735,7 +750,7 @@ final class IdempotencyMiddlewareTest
             Assert::same($exception->getMessage(), 'declined');
         }
 
-        Assert::true($storage->claim(new IdempotencyKey('key-1'), new IdempotencyFingerprint('any')));
+        Assert::true($storage->claim($this->storageKey('key-1'), new IdempotencyFingerprint('any')));
     }
 
     public function storageFailureOnASuccessfulResponseReleasesTheClaim(): void
@@ -746,6 +761,7 @@ final class IdempotencyMiddlewareTest
             storage: $storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
         );
 
         try {
@@ -755,7 +771,7 @@ final class IdempotencyMiddlewareTest
             Assert::same($exception->getMessage(), 'storage is down');
         }
 
-        Assert::true($storage->claim(new IdempotencyKey('key-1'), new IdempotencyFingerprint('any')));
+        Assert::true($storage->claim($this->storageKey('key-1'), new IdempotencyFingerprint('any')));
     }
 
     public function failingReleaseDoesNotReplaceTheHandlerFailure(): void
@@ -769,6 +785,7 @@ final class IdempotencyMiddlewareTest
             ),
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
         );
 
         try {
@@ -794,6 +811,7 @@ final class IdempotencyMiddlewareTest
             ),
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
         );
 
         try {
@@ -832,6 +850,7 @@ final class IdempotencyMiddlewareTest
             storage: $storage,
             responseFactory: new FakeResponseFactory(),
             clock: $clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             domainFailureRenderer: new FakeDomainFailureRenderer(statusCode: $statusCode),
         );
         $request = $this->keyedRequest();
@@ -854,6 +873,200 @@ final class IdempotencyMiddlewareTest
         ];
     }
 
+    public function malformedKeyYieldsBadRequestInsteadOfServerError(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            path: '/api/payments',
+            headers: ['idempotency-key' => ['not a valid key']],
+        );
+        $handler = new FakeHandler();
+
+        $response = $this->middleware->process($request, $handler);
+
+        Assert::same($response->getStatusCode(), 400);
+        Assert::same($handler->getCallCount(), 0);
+        Assert::string((string) $response->getBody())->contains('Idempotency key has an invalid format');
+    }
+
+    public function overLongKeyYieldsBadRequest(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            path: '/api/payments',
+            headers: ['idempotency-key' => [str_repeat('a', 256)]],
+        );
+
+        Assert::same($this->middleware->process($request, new FakeHandler())->getStatusCode(), 400);
+    }
+
+    /**
+     * A required-but-absent key is a contract of the extractor, not a malformed
+     * value: it must keep propagating past the 400 guard.
+     */
+    public function missingKeyExceptionStillPropagates(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: new PayloadIdempotencyKeyExtractor('order.id'),
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        try {
+            $middleware->process(new FakeRequest(method: 'POST'), new FakeHandler());
+            Assert::fail('Expected MissingKeyException');
+        } catch (MissingKeyException) {
+            Assert::true(actual: true);
+        }
+    }
+
+    /**
+     * A scope resolver blowing up is a deployment error (the application decides
+     * what the attribute holds), so it must not be answered as a bad request.
+     */
+    public function scopeResolverFailureIsNotReportedAsBadRequest(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new RequestAttributeScopeResolver(),
+        );
+
+        try {
+            $middleware->process(
+                new FakeRequest(
+                    method: 'POST',
+                    headers: ['idempotency-key' => ['key-1']],
+                    attributes: ['user' => new \stdClass()],
+                ),
+                new FakeHandler(),
+            );
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            Assert::true(actual: true);
+        }
+    }
+
+    public function setCookieIsNeitherStoredNorReplayed(): void
+    {
+        $handler = new FakeHandler(responseHeader: 'Set-Cookie', responseHeaderValue: 'PHPSESSID=secret');
+
+        $first = $this->middleware->process($this->keyedRequest(), $handler);
+        Assert::same($first->getHeader('Set-Cookie'), ['PHPSESSID=secret']);
+
+        $replay = $this->middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($handler->getCallCount(), 1);
+        Assert::same($replay->getHeader('Set-Cookie'), []);
+    }
+
+    public function excludedResponseHeadersAreConfigurable(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+            excludedResponseHeaders: ['X-Secret'],
+        );
+        $handler = new FakeHandler(responseHeader: 'X-Secret', responseHeaderValue: 'shh');
+
+        $middleware->process($this->keyedRequest(), $handler);
+        $replay = $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($replay->getHeader('X-Secret'), []);
+    }
+
+    /**
+     * Regression for the cross-caller replay: an identical key and an identical
+     * payload from a different principal must run the handler again and get its
+     * own response, never the first caller's.
+     */
+    public function differentCallersNeverShareARecord(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new RequestAttributeScopeResolver(),
+        );
+        $handler = new FakeHandler();
+
+        $middleware->process($this->callerRequest('alice'), $handler);
+        $middleware->process($this->callerRequest('mallory'), $handler);
+
+        Assert::same($handler->getCallCount(), 2);
+    }
+
+    public function theSameCallerStillReplays(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new RequestAttributeScopeResolver(),
+        );
+        $handler = new FakeHandler();
+
+        $middleware->process($this->callerRequest('alice'), $handler);
+        $middleware->process($this->callerRequest('alice'), $handler);
+
+        Assert::same($handler->getCallCount(), 1);
+    }
+
+    /**
+     * The same key under two endpoints is two records: the endpoint scope rides
+     * on top of the caller scope through the composite.
+     */
+    public function differentEndpointsNeverShareARecord(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new CompositeScopeResolver(
+                new RequestAttributeScopeResolver(),
+                new RequestTargetScopeResolver(),
+            ),
+        );
+        $handler = new FakeHandler();
+
+        $middleware->process($this->callerRequest('alice', '/api/payments'), $handler);
+        $middleware->process($this->callerRequest('alice', '/api/refunds'), $handler);
+
+        Assert::same($handler->getCallCount(), 2);
+    }
+
+    /**
+     * The key the middleware actually addresses: every key is namespaced by the
+     * scope resolver before it reaches storage.
+     */
+    private function storageKey(string $value): IdempotencyKey
+    {
+        return (new SharedKeyspaceScopeResolver())
+            ->resolve(new FakeRequest())
+            ->apply(new IdempotencyKey($value));
+    }
+
+    private function callerRequest(string $caller, string $path = '/api/payments'): FakeRequest
+    {
+        return new FakeRequest(
+            method: 'POST',
+            path: $path,
+            body: '{"amount":1}',
+            headers: ['idempotency-key' => ['key-1']],
+            attributes: ['user' => $caller],
+        );
+    }
+
     private function middlewareWith(
         FakeDomainFailureRenderer $renderer,
         ?FailureClassifier $classifier = null,
@@ -863,6 +1076,7 @@ final class IdempotencyMiddlewareTest
             storage: $this->storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
             ttlSeconds: 3600,
             domainFailureRenderer: $renderer,
             failureClassifier: $classifier,

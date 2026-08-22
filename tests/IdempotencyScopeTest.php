@@ -166,6 +166,43 @@ final class IdempotencyScopeTest
         );
     }
 
+    public function ofKeepsANameThatFits(): void
+    {
+        Assert::same(IdempotencyScope::of('POST /api/orders')->name, 'POST /api/orders');
+    }
+
+    public function ofCollapsesAnOverLongNameToItsHash(): void
+    {
+        $name = str_repeat('a', 1025);
+
+        Assert::same(IdempotencyScope::of($name)->name, hash('sha256', $name));
+    }
+
+    public function ofKeepsTheLongestNameThatStillFits(): void
+    {
+        $name = str_repeat('a', 1024);
+
+        Assert::same(IdempotencyScope::of($name)->name, $name);
+    }
+
+    public function ofStillRejectsControlCharacters(): void
+    {
+        try {
+            IdempotencyScope::of("orders\n");
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            Assert::true(actual: true);
+        }
+    }
+
+    public function ofKeepsOverLongNamesDistinct(): void
+    {
+        $left = IdempotencyScope::of(str_repeat('a', 2000));
+        $right = IdempotencyScope::of(str_repeat('a', 1999) . 'b');
+
+        Assert::false($left->equals($right));
+    }
+
     /**
      * Any length the key format allows, built out of the whole legal alphabet.
      */

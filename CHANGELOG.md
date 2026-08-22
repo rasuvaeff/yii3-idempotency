@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **BREAKING (security).** `IdempotencyMiddleware::__construct()` takes a new
+  required `IdempotencyScopeResolver $scopeResolver` argument, and the bundled
+  `config/params.php` key `callerAttribute` is required — the container refuses
+  to build the middleware while it is unset. Idempotency keys were global: a
+  client that knew (or guessed) another client's key and reproduced its payload
+  got that client's cached response replayed, and the replay path returns the
+  stored response without entering the handler, so it never reached the
+  handler's authorization checks. The same gap let a client occupy someone
+  else's key for the whole TTL. New `RequestAttributeScopeResolver` namespaces
+  the key by the authenticated principal in a request attribute;
+  `SharedKeyspaceScopeResolver` is the documented opt-out that restores the old
+  one-keyspace-for-everyone behaviour; `CompositeScopeResolver` stacks the
+  endpoint dimension on top. The `scope` param now defaults to `'auto'`, and
+  `IdempotencyKeyExtractor` is bound to the bare header extractor — scoping
+  moved from the extractor to the middleware. Existing stored records become
+  unreachable under the new keys; the table is a TTL cache, so they simply
+  expire.
+- `Set-Cookie`, `Date` and hop-by-hop response headers are no longer captured
+  nor replayed. A session identifier no longer sits in a storage row in
+  plaintext for the whole TTL, and a stale cookie is no longer handed back on
+  replay. The deny-list is configurable via the new `excludedResponseHeaders`
+  constructor argument.
+- A malformed idempotency key from an untrusted request now answers 400 instead
+  of raising an unhandled `InvalidArgumentException` (a 500). `MissingKeyException`
+  keeps propagating — a `required: true` extractor raising it is a deliberate
+  contract, and a scope resolver failing is a deployment error, so neither is
+  turned into a 400.
+- `IdempotencyScope::of()` builds a scope from a name of any length, collapsing
+  one longer than 1024 characters to its hash. `RequestTargetScopeResolver` uses
+  it, so a very long request path no longer turns into a 500.
+- Raised `rasuvaeff/property-testing-testo` to `^0.6`.
+
 - Failure classification and domain-failure caching: `FailureKind`,
   `FailureClassifier`, `DefaultFailureClassifier`, the `RetryableFailure` marker
   and `DomainFailureRenderer`. With a renderer configured, a thrown domain

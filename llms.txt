@@ -17,7 +17,9 @@ composer require rasuvaeff/yii3-idempotency
 - Only 2xx handler responses are cached; non-2xx (3xx/4xx incl. retryable 409/423/429, and any 5xx) release the claim and stay retryable
 - Thrown failures: cached ONLY when a `DomainFailureRenderer` is configured AND the `FailureClassifier` returns `FailureKind::Domain`; otherwise the claim is released and the throwable is rethrown
 - Returning a 4xx response and throwing a domain exception are different paths — only the throwing path is classified
-- Scoping (optional): storage key becomes `sha256(scope . "\0" . key)`, a fixed 64 chars; unscoped keys are stored verbatim
+- Caller scoping is MANDATORY: `scopeResolver` is a required constructor argument. Every key is namespaced before it reaches storage — `sha256(scope . "\0" . key)`, a fixed 64 chars. Without it one client can replay another client's cached response, and the replay path never enters the handler (so never its authorization checks)
+- Malformed key from the request => 400, not an unhandled exception. `MissingKeyException` still propagates
+- `Set-Cookie`, `Date` and hop-by-hop response headers are never captured nor replayed
 - Idempotency applies only to configured `methods` (default POST/PUT/PATCH, case-insensitive); other methods pass through untouched
 - Policy: `PassThrough` (skip without key) or `Reject` (400 without key)
 - TTL: records expire after configured seconds
@@ -90,11 +92,13 @@ $middleware = new IdempotencyMiddleware(
     storage: $storage,
     responseFactory: $responseFactory, // PSR-17
     clock: $clock,                     // PSR-20
+    scopeResolver: new RequestAttributeScopeResolver(attribute: 'user'), // REQUIRED, no default
     policy: IdempotencyPolicy::PassThrough,
     ttlSeconds: 3600,
     methods: ['POST', 'PUT', 'PATCH'],
     domainFailureRenderer: null,  // DomainFailureRenderer|null — null keeps every throwable retryable
     failureClassifier: null,      // FailureClassifier|null — defaults to DefaultFailureClassifier
+    excludedResponseHeaders: null, // list<string>|null — null keeps the built-in deny-list
 );
 ```
 
@@ -121,11 +125,36 @@ $scope = new IdempotencyScope('orders');   // 1-1024 chars, no control character
 $scope->apply($key);                       // IdempotencyKey(sha256(name . "\0" . key->value))
 $scope->equals($other);                    // bool
 
-$extractor = new ScopedIdempotencyKeyExtractor(
+IdempotencyScope::of($name);               // like the constructor, but collapses a name > 1024 chars to its hash
+
+$extractor = new ScopedIdempotencyKeyExtractor(  // kept for compatibility; scope the middleware instead
     extractor: new HeaderIdempotencyKeyExtractor(),
     scopeResolver: new RequestTargetScopeResolver(), // scope name = "POST /api/orders" (query excluded)
 );
 ```
+
+### RequestAttributeScopeResolver / SharedKeyspaceScopeResolver / CompositeScopeResolver
+
+```php
+// recommended: namespace the key by the authenticated principal
+new RequestAttributeScopeResolver(
+    attribute: 'user',        // request attribute holding the principal; default 'user'
+    anonymous: 'anonymous',   // scope for requests carrying no principal
+    identity: null,           // Closure(mixed): string|int|Stringable|null — for a user object
+);                            // scope name = "caller:<identity>"
+
+// documented opt-out: every caller in one keyspace (pre-2.0 behaviour)
+new SharedKeyspaceScopeResolver();  // scope name = "shared"
+
+// stack dimensions: caller + endpoint
+new CompositeScopeResolver(
+    new RequestAttributeScopeResolver(attribute: 'user'),
+    new RequestTargetScopeResolver(),
+);                            // scope name = "caller:alice | POST /api/orders"
+```
+
+An attribute value that is not string/int/Stringable/null throws
+`InvalidArgumentException` — a deployment error, deliberately NOT turned into a 400.
 
 ### FailureKind / FailureClassifier / DefaultFailureClassifier / RetryableFailure
 
@@ -174,7 +203,10 @@ return [
         'policy' => 'pass_through',
         'ttlSeconds' => 3600,
         'methods' => ['POST', 'PUT', 'PATCH'],
-        'scope' => null, // null — global; 'auto' — RequestTargetScopeResolver; any other string — IdempotencyScope
+        // REQUIRED — the container throws while this is null.
+        'callerAttribute' => 'user', // attribute name, or false for SharedKeyspaceScopeResolver
+        'anonymousCaller' => 'anonymous',
+        'scope' => 'auto', // 'auto' — RequestTargetScopeResolver; null — no endpoint dimension; any other string — IdempotencyScope
     ],
 ];
 ```

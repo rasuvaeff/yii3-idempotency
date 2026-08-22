@@ -35,12 +35,15 @@ composer require rasuvaeff/yii3-idempotency
 use Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
+use Rasuvaeff\Yii3Idempotency\RequestAttributeScopeResolver;
 
 $middleware = new IdempotencyMiddleware(
     keyExtractor: new HeaderIdempotencyKeyExtractor(),
     storage: new InMemoryIdempotencyStorage($clock),
     responseFactory: $responseFactory,
     clock: $clock,
+    // обязательный: кому принадлежит ключ. См. «Скоуп по клиенту» ниже
+    scopeResolver: new RequestAttributeScopeResolver(attribute: 'user'),
     ttlSeconds: 3600,
 );
 ```
@@ -55,6 +58,8 @@ $middleware = new IdempotencyMiddleware(
 | Тот же ключ + тот же payload | Воспроизводится сохранённый ответ (обработчик не вызывается) |
 | Тот же ключ + другой payload | 422 Unprocessable Content |
 | Тот же ключ во время обработки первого запроса | 409 Conflict |
+| Некорректный ключ (слишком длинный, недопустимые символы) | 400 Bad Request |
+| Тот же ключ + тот же payload, но другой клиент | Обработчик выполняется снова — два клиента никогда не делят одну запись |
 | Ответ обработчика не 2xx (3xx/4xx/5xx) | Ответ НЕ сохраняется — захват освобождается, клиент может повторить запрос с тем же ключом |
 | Обработчик бросил исключение, `DomainFailureRenderer` не задан | Захват освобождается, исключение пробрасывается — повтор снова выполняет обработчик |
 | Обработчик бросил доменную ошибку, renderer задан | Отрендеренный ответ сохраняется и воспроизводится как успех (см. ниже) |
@@ -78,6 +83,7 @@ $middleware = new IdempotencyMiddleware(
     storage: $storage,
     responseFactory: $responseFactory,
     clock: $clock,
+    scopeResolver: new RequestAttributeScopeResolver(attribute: 'user'),
     domainFailureRenderer: $renderer,                     // ваш DomainFailureRenderer
     failureClassifier: new DefaultFailureClassifier([     // необязательные переопределения
         MisconfiguredGatewayException::class => FailureKind::Bug,
@@ -107,35 +113,78 @@ Middleware кэширует ровно то, что вернул renderer, по�
 Классифицируется только путь с исключением. Обработчик, *вернувший* 4xx-ответ,
 по-прежнему освобождает захват.
 
-### Скоупы ключей
+### Скоуп по клиенту
 
-Голый ключ идентифицирует запрос, но не эндпоинт, поэтому один и тот же ключ,
-отправленный на два эндпоинта, попадает в одну запись. Скоуп задаёт ему
-пространство имён:
+У `scopeResolver` намеренно нет значения по умолчанию. Общее на всех клиентов
+пространство ключей позволяет одному клиенту получить кэшированный ответ
+другого — а путь воспроизведения отдаёт сохранённый ответ, вообще не заходя в
+обработчик, то есть и в его проверки авторизации. Та же дыра позволяет занять
+чужой ключ и заблокировать владельца на весь TTL.
 
 ```php
+use Rasuvaeff\Yii3Idempotency\RequestAttributeScopeResolver;
+
+// аутентифицированный принципал, который положил в атрибут запроса ваш auth-middleware
+scopeResolver: new RequestAttributeScopeResolver(attribute: 'user');
+
+// в атрибуте лежит объект пользователя, а не идентификатор
+scopeResolver: new RequestAttributeScopeResolver(
+    attribute: 'user',
+    identity: static fn (mixed $user): ?int => $user?->getId(),
+);
+```
+
+Запрос без принципала попадает в пространство `anonymous`, общее для всех
+анонимных клиентов — разделить их не по чему. Не отдавайте приватные для
+клиента данные под ключом идемпотентности на эндпоинте, доступном анонимно.
+
+**Opt-out.** `SharedKeyspaceScopeResolver` помещает всех клиентов в одно
+пространство ключей — поведение версий до 2.0. Это безопасно, только если до
+middleware доходит один принципал: single-tenant-развёртывание, внутренний
+сервис с одним доверенным клиентом или эндпоинт, в ответах которого нет ничего
+приватного для клиента.
+
+```php
+use Rasuvaeff\Yii3Idempotency\SharedKeyspaceScopeResolver;
+
+scopeResolver: new SharedKeyspaceScopeResolver();
+```
+
+### Скоуп по эндпоинту
+
+Ключ также идентифицирует запрос, но не эндпоинт, поэтому один и тот же ключ,
+отправленный на два эндпоинта, попал бы в одну запись. `CompositeScopeResolver`
+кладёт пространство имён эндпоинта поверх клиентского:
+
+```php
+use Rasuvaeff\Yii3Idempotency\CompositeScopeResolver;
 use Rasuvaeff\Yii3Idempotency\IdempotencyScope;
 use Rasuvaeff\Yii3Idempotency\RequestTargetScopeResolver;
-use Rasuvaeff\Yii3Idempotency\ScopedIdempotencyKeyExtractor;
 
-// 'auto' — своё пространство имён на каждый "METHOD /path"
-$extractor = new ScopedIdempotencyKeyExtractor(
-    extractor: new HeaderIdempotencyKeyExtractor(),
-    scopeResolver: new RequestTargetScopeResolver(),
+// клиент + "METHOD /path" — то, что по умолчанию собирает конфиг пакета
+scopeResolver: new CompositeScopeResolver(
+    new RequestAttributeScopeResolver(attribute: 'user'),
+    new RequestTargetScopeResolver(),
 );
 
-// явный — связанные эндпоинты делят одно пространство имён
-$extractor = new ScopedIdempotencyKeyExtractor(
-    extractor: new HeaderIdempotencyKeyExtractor(),
-    scopeResolver: new IdempotencyScope('orders'),
+// клиент + явное пространство имён, общее для связанных эндпоинтов
+scopeResolver: new CompositeScopeResolver(
+    new RequestAttributeScopeResolver(attribute: 'user'),
+    new IdempotencyScope('orders'),
 );
 ```
 
 Ключ хранения становится `sha256(scope . "\0" . key)` — фиксированные 64
 символа, поэтому длинный, но валидный клиентский ключ невозможно вытолкнуть за
 предел в 255 символов. Как следствие, сохранённые ключи непрозрачны: скоупы
-меняют читаемость ключей на отсутствие коллизий. Не задавайте скоуп — и ключи
-останутся глобальными и сохранятся как есть.
+меняют читаемость ключей на отсутствие коллизий. Имя скоупа, которое само
+превысило бы 1024 символа (длинный путь, длинный идентификатор принципала,
+несколько склеенных измерений), сворачивается в хэш, а не отвергается — данные
+запроса не могут превратиться в 500.
+
+`ScopedIdempotencyKeyExtractor` по-прежнему применяет скоуп на уровне
+экстрактора и оставлен для совместимости, но поддерживаемый способ — скоуп на
+middleware: это единственное место, которое нельзя пропустить.
 
 ### Ключи из payload
 
@@ -164,7 +213,12 @@ return [
         'policy' => 'pass_through', // or 'reject'
         'ttlSeconds' => 3600,
         'methods' => ['POST', 'PUT', 'PATCH'], // methods idempotency applies to
-        'scope' => null, // null — глобально; 'auto' — по "METHOD /path"; любая другая строка — явное имя скоупа
+        // ОБЯЗАТЕЛЬНО — пока здесь null, контейнер отказывается собирать middleware.
+        // Имя атрибута запроса: ключи скоупятся по принципалу, лежащему в нём.
+        // false: все клиенты в одном пространстве ключей (поведение до 2.0) — см. «Скоуп по клиенту».
+        'callerAttribute' => 'user',
+        'anonymousCaller' => 'anonymous', // пространство имён для запросов без принципала
+        'scope' => 'auto', // 'auto' — по "METHOD /path"; null — одно пространство на все эндпоинты; любая другая строка — явное имя скоупа
     ],
 ];
 ```
@@ -189,8 +243,11 @@ return [
 | `HeaderIdempotencyKeyExtractor` | Извлекает ключ из заголовка запроса |
 | `PayloadIdempotencyKeyExtractor` | Извлекает ключ из распарсенного тела по dot-пути |
 | `ScopedIdempotencyKeyExtractor` | Декоратор, задающий извлечённому ключу пространство имён скоупа |
-| `IdempotencyScope` | Валидируемое имя скоупа; сам себе resolver |
+| `IdempotencyScope` | Валидируемое имя скоупа; сам себе resolver. `of()` сворачивает слишком длинное имя в хэш |
 | `IdempotencyScopeResolver` | Интерфейс разрешения скоупа по запросу |
+| `RequestAttributeScopeResolver` | Задаёт ключу пространство имён по принципалу из атрибута запроса |
+| `SharedKeyspaceScopeResolver` | Помещает всех клиентов в одно пространство ключей — документированный opt-out |
+| `CompositeScopeResolver` | Склеивает несколько измерений скоупа в одно |
 | `RequestTargetScopeResolver` | Выводит скоуп из `METHOD /path` |
 | `IdempotencyPolicy` | Enum: `PassThrough`, `Reject` |
 | `FailureKind` | Enum: `Domain`, `Infrastructure`, `Bug` |
@@ -202,6 +259,9 @@ return [
 
 ## Безопасность
 
+- Ключи скоупятся по клиенту: `scopeResolver` — обязательный аргумент конструктора, поэтому общее на всех клиентов пространство ключей становится осознанным документированным выбором (`SharedKeyspaceScopeResolver`), а не случайностью. Без него один клиент может получить кэшированный ответ другого, а путь воспроизведения не заходит в обработчик — то есть и в его проверки авторизации
+- `Set-Cookie`, `Date` и hop-by-hop заголовки ответа никогда не сохраняются: идентификатор сессии не попадает в строку хранилища на весь TTL, а протухшая кука не воспроизводится. Список задаётся аргументом конструктора, если нужно больше
+- Некорректный ключ из недоверенного запроса даёт 400, а не 500 — клиент не может одним заголовком генерировать неперехваченные исключения
 - Fingerprint включает method, path, query string и body — предотвращает подмену payload
 - Stream тела запроса перематывается после снятия fingerprint — обработчики могут читать его повторно
 - Кэшируются только 2xx-ответы, **которые вернул обработчик**; не-2xx (включая повторяемые 409/423/429 и любые 5xx) освобождают захват, поэтому временный сбой не воспроизводится весь TTL. Отрендеренная доменная ошибка — единственное осознанное исключение, она кэшируется с тем статусом, который выбрал renderer

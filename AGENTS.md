@@ -13,7 +13,8 @@ Public API: `IdempotencyMiddleware`, `IdempotencyKey`, `IdempotencyFingerprint`,
 `IdempotencyResponse`, `IdempotencyStorage`, `InMemoryIdempotencyStorage`,
 `HeaderIdempotencyKeyExtractor`, `PayloadIdempotencyKeyExtractor`,
 `ScopedIdempotencyKeyExtractor`, `IdempotencyScope`, `IdempotencyScopeResolver`,
-`RequestTargetScopeResolver`, `IdempotencyPolicy`, `FailureKind`, `FailureClassifier`,
+`RequestTargetScopeResolver`, `RequestAttributeScopeResolver`,
+`SharedKeyspaceScopeResolver`, `CompositeScopeResolver`, `IdempotencyPolicy`, `FailureKind`, `FailureClassifier`,
 `DefaultFailureClassifier`, `RetryableFailure`, `DomainFailureRenderer`, `MissingKeyException`.
 
 ## Golden rules
@@ -21,9 +22,19 @@ Public API: `IdempotencyMiddleware`, `IdempotencyKey`, `IdempotencyFingerprint`,
 1. **Verification is mandatory.** Never claim "done" without a fresh green
    `composer build`. "Should work" does not count.
 2. **No suppressions.** No `@psalm-suppress`, no baseline. Fix the root cause.
-3. **Atomic claim.** Storage MUST support atomic claim. `InMemoryIdempotencyStorage`
+3. **The keyspace is partitioned per caller, and the safe default stays safe.**
+   `IdempotencyMiddleware::$scopeResolver` is a required constructor argument on
+   purpose: a keyspace shared across clients lets one client replay another
+   client's cached response, and the replay path returns the stored response
+   without entering the handler — so it never reaches the handler's
+   authorization checks either. Never give `$scopeResolver` a default, never
+   make `callerAttribute` optional in `config/di.php`.
+   `SharedKeyspaceScopeResolver` is the documented opt-out and must stay an
+   explicit, named choice.
+4. **Atomic claim.** Storage MUST support atomic claim. `InMemoryIdempotencyStorage`
    is a testing double — production uses persistent adapters.
-4. **Preserve the public contract.** Update README + tests with any API change.
+5. **Preserve the public contract.** Update README **and `README.ru.md`** +
+   tests with any API change.
 
 ## Commands
 
@@ -74,14 +85,29 @@ make release-check
   caught, the claim released and the *original* throwable rethrown. Otherwise a
   broken renderer answers every later request under that key with 409 until the
   claim TTL expires — and forever in a storage without one.
-- Scoping lives in the extractor, not the middleware: `ScopedIdempotencyKeyExtractor`
-  rewrites the key to `sha256(scope . "\0" . key)`. Hashing rather than prefixing
+- Scoping lives in the middleware: `process()` applies
+  `$scopeResolver->resolve($request)->apply($key)` before touching storage, so
+  the storage key is `sha256(scope . "\0" . key)`. Hashing rather than prefixing
   is deliberate — a prefix would push a 250-char client key past the 255-char
   limit and reject a request that used to work. Do not "improve" it into a
   readable prefix without solving that.
+  `ScopedIdempotencyKeyExtractor` still does the same at the extractor level and
+  is kept for compatibility; do not route new work through it.
+- `IdempotencyScope::of()` collapses a name longer than 1024 characters to its
+  hash instead of throwing. Every resolver that builds a name out of request
+  data must use it — the constructor throwing there would be a client-triggered
+  500.
+- The 400-on-malformed-key guard wraps ONLY `keyExtractor->extract()`. The scope
+  resolver runs outside it: its failures come from what the application put in a
+  request attribute, and reporting a deployment error as a bad request would
+  hide it.
+- `captureHeaders()` drops `Set-Cookie`, `Date` and hop-by-hop headers. Anything
+  added to the deny-list must also stay out of `replayResponse()` by
+  construction — the replay only knows what was captured.
 - `PayloadIdempotencyKeyExtractor` throws `MissingKeyException` from `extract()`,
-  which runs *before* the claim and outside the middleware's try block — there is
-  nothing to release and the classifier never sees it. Keep it that way.
+  which runs *before* the claim — there is nothing to release and the classifier
+  never sees it. It is a `RuntimeException`, so the 400 guard (which catches only
+  `InvalidArgumentException`) does not swallow it. Keep both facts that way.
 - Idempotency applies only to the configured `methods` (default POST/PUT/PATCH,
   normalized to upper-case); other methods pass through before any key/claim work.
   Configurable via the `methods` constructor arg / `methods` param.

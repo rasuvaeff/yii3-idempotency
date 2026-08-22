@@ -50,6 +50,21 @@ final readonly class IdempotencyScope implements IdempotencyScopeResolver
     }
 
     /**
+     * Like the constructor, but collapses an over-long name to its hash instead
+     * of rejecting it.
+     *
+     * A scope name assembled from request data — a long path, a long principal
+     * identifier, several dimensions joined together — must not turn a request
+     * into a 500 just for crossing the limit. The name is only ever hashed into
+     * a storage key, never stored or echoed, so a collapsed name partitions the
+     * keyspace exactly as well as the original.
+     */
+    public static function of(string $name): self
+    {
+        return new self(\strlen($name) > self::MAX_LENGTH ? hash('sha256', $name) : $name);
+    }
+
+    /**
      * The storage key for this scope. Hashing rather than prefixing keeps the
      * result at a fixed 64 characters: a prefix would push a long-but-valid
      * client key past the 255-character limit and reject a request that used

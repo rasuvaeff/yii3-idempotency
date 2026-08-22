@@ -23,28 +23,63 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
     private const int SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
 
     /**
+     * Headers that describe the original response or connection and must never
+     * be persisted and handed back on a replay. `Set-Cookie` above all: a
+     * session identifier does not belong in a storage row for the whole TTL,
+     * and a replayed one is stale at best.
+     *
+     * @var list<non-empty-string>
+     */
+    private const array DEFAULT_EXCLUDED_RESPONSE_HEADERS = [
+        'set-cookie',
+        'date',
+        'connection',
+        'keep-alive',
+        'transfer-encoding',
+        'te',
+        'trailer',
+        'upgrade',
+        'proxy-authenticate',
+        'proxy-authorization',
+    ];
+
+    /**
      * @var list<string>
      */
     private array $methods;
 
+    /**
+     * @var array<string, true>
+     */
+    private array $excludedResponseHeaders;
+
     private FailureClassifier $failureClassifier;
 
     /**
+     * @param IdempotencyScopeResolver $scopeResolver partitions the keyspace; there is no default because
+     *                                                every safe choice depends on the application. Use
+     *                                                {@see RequestAttributeScopeResolver} for a multi-client
+     *                                                API, {@see SharedKeyspaceScopeResolver} only when a
+     *                                                single principal can reach this middleware
      * @param list<string> $methods HTTP methods idempotency applies to; others pass through untouched
      * @param DomainFailureRenderer|null $domainFailureRenderer renders domain failures so they can be cached;
      *                                                          `null` keeps every thrown failure retryable
      * @param FailureClassifier|null $failureClassifier defaults to {@see DefaultFailureClassifier}
+     * @param list<string>|null $excludedResponseHeaders response headers never captured nor replayed;
+     *                                                   `null` keeps the built-in list
      */
     public function __construct(
         private IdempotencyKeyExtractor $keyExtractor,
         private IdempotencyStorage $storage,
         private ResponseFactoryInterface $responseFactory,
         private ClockInterface $clock,
+        private IdempotencyScopeResolver $scopeResolver,
         private IdempotencyPolicy $policy = IdempotencyPolicy::PassThrough,
         private int $ttlSeconds = 3600,
         array $methods = ['POST', 'PUT', 'PATCH'],
         private ?DomainFailureRenderer $domainFailureRenderer = null,
         ?FailureClassifier $failureClassifier = null,
+        ?array $excludedResponseHeaders = null,
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
             throw new \InvalidArgumentException('TTL seconds must be greater than 0');
@@ -52,6 +87,14 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
 
         $this->methods = array_map(strtoupper(...), $methods);
         $this->failureClassifier = $failureClassifier ?? new DefaultFailureClassifier();
+
+        $excluded = [];
+
+        foreach ($excludedResponseHeaders ?? self::DEFAULT_EXCLUDED_RESPONSE_HEADERS as $name) {
+            $excluded[strtolower($name)] = true;
+        }
+
+        $this->excludedResponseHeaders = $excluded;
     }
 
     #[\Override]
@@ -61,7 +104,15 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        $key = $this->keyExtractor->extract($request);
+        // The key comes straight off an untrusted request, so a value that
+        // IdempotencyKey rejects is a client error, not a server fault.
+        // MissingKeyException is a RuntimeException and keeps propagating: a
+        // `required: true` extractor raising it is a deliberate contract.
+        try {
+            $key = $this->keyExtractor->extract($request);
+        } catch (\InvalidArgumentException) {
+            return $this->malformedKeyResponse();
+        }
 
         if (!$key instanceof IdempotencyKey) {
             return match ($this->policy) {
@@ -69,6 +120,11 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
                 IdempotencyPolicy::PassThrough => $handler->handle($request),
             };
         }
+
+        // Deliberately outside the catch above: the scope comes from the
+        // application (a request attribute it populates), so a failure here is
+        // a deployment error that must not be reported as a bad request.
+        $key = $this->scopeResolver->resolve($request)->apply($key);
 
         $fingerprint = IdempotencyFingerprint::fromRequest($request);
 
@@ -223,6 +279,14 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         );
     }
 
+    private function malformedKeyResponse(): ResponseInterface
+    {
+        return $this->jsonErrorResponse(
+            statusCode: 400,
+            body: '{"error":"Bad Request","message":"Idempotency key has an invalid format"}',
+        );
+    }
+
     private function inProgressResponse(): ResponseInterface
     {
         return $this->jsonErrorResponse(
@@ -264,8 +328,14 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         $headers = [];
 
         foreach ($response->getHeaders() as $name => $values) {
+            $name = (string) $name;
+
+            if (isset($this->excludedResponseHeaders[strtolower($name)])) {
+                continue;
+            }
+
             /** @var list<string> $values */
-            $headers[(string) $name] = $values;
+            $headers[$name] = $values;
         }
 
         return $headers;

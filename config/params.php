@@ -8,8 +8,19 @@ return [
         'policy' => 'pass_through',
         'ttlSeconds' => 3600,
         'methods' => ['POST', 'PUT', 'PATCH'],
-        // null — keys are global; 'auto' — scoped by "METHOD /path";
+        // REQUIRED — the container refuses to build the middleware while this is null.
+        // A request-attribute name (for example 'user'): keys are namespaced by the
+        // authenticated principal found there, so one client can never replay another
+        // client's cached response.
+        // false: every caller shares one keyspace (the 1.x behaviour). Only safe for a
+        // single-tenant deployment or a fully trusted single client.
+        'callerAttribute' => null,
+        // Scope name for requests that carry no principal; they share it among
+        // themselves, because there is no identity to separate them by.
+        'anonymousCaller' => 'anonymous',
+        // Endpoint namespace applied on top of the caller.
+        // 'auto' — "METHOD /path"; null — one namespace for every endpoint;
         // any other string — an explicit scope name shared by related endpoints
-        'scope' => null,
+        'scope' => 'auto',
     ],
 ];

@@ -3,7 +3,7 @@
 | Script | Shows | Needs server? |
 |---|---|---|
 | `basic.php` | Basic package bootstrap usage | No |
-| `extensions.php` | Key scoping, failure classification, payload dot-path keys | No |
+| `extensions.php` | Caller and endpoint scoping, failure classification, payload dot-path keys | No |
 
 Both scripts load `vendor/autoload.php`, so a clean checkout needs dependencies
 installed first:
