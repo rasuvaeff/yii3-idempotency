@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-08-22
 
 - **BREAKING (security).** `IdempotencyMiddleware::__construct()` takes a new
   required `IdempotencyScopeResolver $scopeResolver` argument, and the bundled
