@@ -139,7 +139,11 @@ final class FakeRequest implements ServerRequestInterface
     #[\Override]
     public function getAttribute(string $name, mixed $default = null): mixed
     {
-        return $this->attributes[$name] ?? $default;
+        // An explicitly set null is a value, not an absence: PSR-7 says the
+        // default applies only when the attribute was never set.
+        return \array_key_exists($name, $this->attributes)
+            ? $this->attributes[$name]
+            : $default;
     }
 
     #[\Override]
