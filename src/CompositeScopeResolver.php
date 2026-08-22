@@ -21,7 +21,7 @@ final readonly class CompositeScopeResolver implements IdempotencyScopeResolver
     private const string SEPARATOR = ' | ';
 
     /**
-     * @var non-empty-list<IdempotencyScopeResolver>
+     * @var non-empty-array<array-key, IdempotencyScopeResolver>
      */
     private array $resolvers;
 
@@ -31,7 +31,8 @@ final readonly class CompositeScopeResolver implements IdempotencyScopeResolver
             throw new \InvalidArgumentException('Composite scope needs at least one resolver');
         }
 
-        $this->resolvers = array_values($resolvers);
+        // A variadic parameter is already a list, so no re-indexing is needed.
+        $this->resolvers = $resolvers;
     }
 
     #[\Override]

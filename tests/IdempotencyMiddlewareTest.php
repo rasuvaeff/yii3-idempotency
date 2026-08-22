@@ -964,6 +964,39 @@ final class IdempotencyMiddlewareTest
         Assert::same($replay->getHeader('Set-Cookie'), []);
     }
 
+    /**
+     * The deny-list is matched case-insensitively: a handler is free to spell
+     * the header the way PSR-7 preserves it.
+     */
+    public function excludedHeadersAreMatchedCaseInsensitively(): void
+    {
+        $handler = new FakeHandler(responseHeaders: ['SET-COOKIE' => 'PHPSESSID=secret']);
+
+        $this->middleware->process($this->keyedRequest(), $handler);
+        $replay = $this->middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($handler->getCallCount(), 1);
+        Assert::same($replay->getHeader('Set-Cookie'), []);
+    }
+
+    /**
+     * An excluded header must skip only itself: everything after it in the
+     * header map still has to be captured.
+     */
+    public function headersAfterAnExcludedOneAreStillCaptured(): void
+    {
+        $handler = new FakeHandler(responseHeaders: [
+            'Set-Cookie' => 'PHPSESSID=secret',
+            'X-Trace-Id' => 'trace-1',
+        ]);
+
+        $this->middleware->process($this->keyedRequest(), $handler);
+        $replay = $this->middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($replay->getHeader('Set-Cookie'), []);
+        Assert::same($replay->getHeader('X-Trace-Id'), ['trace-1']);
+    }
+
     public function excludedResponseHeadersAreConfigurable(): void
     {
         $middleware = new IdempotencyMiddleware(

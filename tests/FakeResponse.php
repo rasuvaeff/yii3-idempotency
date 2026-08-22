@@ -13,7 +13,12 @@ use Psr\Http\Message\StreamInterface;
 final class FakeResponse implements ResponseInterface
 {
     private FakeStream $stream;
-    /** @var array<string, list<string>> */
+    /**
+     * Keyed by the casing the caller used, as PSR-7 requires of `getHeaders()`;
+     * lookups stay case-insensitive.
+     *
+     * @var array<string, list<string>>
+     */
     private array $headers = [];
 
     public function __construct(private int $statusCode = 200)
@@ -63,13 +68,26 @@ final class FakeResponse implements ResponseInterface
     #[\Override]
     public function hasHeader(string $name): bool
     {
-        return isset($this->headers[strtolower($name)]);
+        return $this->headerKey($name) !== null;
+    }
+
+    private function headerKey(string $name): ?string
+    {
+        foreach (array_keys($this->headers) as $key) {
+            if (strcasecmp($key, $name) === 0) {
+                return $key;
+            }
+        }
+
+        return null;
     }
 
     #[\Override]
     public function getHeader(string $name): array
     {
-        return $this->headers[strtolower($name)] ?? [];
+        $key = $this->headerKey($name);
+
+        return $key === null ? [] : $this->headers[$key];
     }
 
     #[\Override]
@@ -82,7 +100,7 @@ final class FakeResponse implements ResponseInterface
     public function withHeader(string $name, $value): self
     {
         $clone = clone $this;
-        $clone->headers[strtolower($name)] = is_array($value) ? array_values($value) : [$value];
+        $clone->headers[$this->headerKey($name) ?? $name] = is_array($value) ? array_values($value) : [$value];
 
         return $clone;
     }
@@ -91,7 +109,7 @@ final class FakeResponse implements ResponseInterface
     public function withAddedHeader(string $name, $value): self
     {
         $clone = clone $this;
-        $clone->headers[strtolower($name)][] = is_array($value) ? implode(', ', $value) : $value;
+        $clone->headers[$this->headerKey($name) ?? $name][] = is_array($value) ? implode(', ', $value) : $value;
 
         return $clone;
     }
@@ -100,7 +118,7 @@ final class FakeResponse implements ResponseInterface
     public function withoutHeader(string $name): self
     {
         $clone = clone $this;
-        unset($clone->headers[strtolower($name)]);
+        unset($clone->headers[$this->headerKey($name) ?? $name]);
 
         return $clone;
     }

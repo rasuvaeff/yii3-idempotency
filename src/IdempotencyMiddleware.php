@@ -49,7 +49,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
     private array $methods;
 
     /**
-     * @var array<string, true>
+     * @var list<string>
      */
     private array $excludedResponseHeaders;
 
@@ -88,13 +88,10 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         $this->methods = array_map(strtoupper(...), $methods);
         $this->failureClassifier = $failureClassifier ?? new DefaultFailureClassifier();
 
-        $excluded = [];
-
-        foreach ($excludedResponseHeaders ?? self::DEFAULT_EXCLUDED_RESPONSE_HEADERS as $name) {
-            $excluded[strtolower($name)] = true;
-        }
-
-        $this->excludedResponseHeaders = $excluded;
+        $this->excludedResponseHeaders = array_map(
+            strtolower(...),
+            $excludedResponseHeaders ?? self::DEFAULT_EXCLUDED_RESPONSE_HEADERS,
+        );
     }
 
     #[\Override]
@@ -330,7 +327,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         foreach ($response->getHeaders() as $name => $values) {
             $name = (string) $name;
 
-            if (isset($this->excludedResponseHeaders[strtolower($name)])) {
+            if (\in_array(strtolower($name), $this->excludedResponseHeaders, strict: true)) {
                 continue;
             }
 
