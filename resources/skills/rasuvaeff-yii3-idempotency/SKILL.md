@@ -4,10 +4,11 @@ description: >-
   Prevent duplicate processing of POST/PUT/PATCH requests in Yii3 APIs with
   rasuvaeff/yii3-idempotency — IdempotencyMiddleware, IdempotencyKey,
   IdempotencyFingerprint, IdempotencyStorage, IdempotencyPolicy,
-  IdempotencyScope, FailureClassifier, DomainFailureRenderer. Use when
-  writing, reviewing or debugging idempotency-key handling, duplicate-request
-  replay, key scoping, domain-failure caching, or 409/422 conflict responses in
-  a project that has this package installed.
+  IdempotencyScope, RequestAttributeScopeResolver, FailureClassifier,
+  DomainFailureRenderer. Use when writing, reviewing or debugging
+  idempotency-key handling, duplicate-request replay, caller/key scoping,
+  domain-failure caching, or 409/422 conflict responses in a project that has
+  this package installed.
 ---
 
 # rasuvaeff/yii3-idempotency
@@ -42,20 +43,38 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
    → 409; replay (same key + same fingerprint) → cached response, handler NOT
    called. Key format: 1-255 chars, `[A-Za-z0-9._-]+`.
 
-   Keys are global unless a `ScopedIdempotencyKeyExtractor` is wired in, which
-   makes the storage key `sha256(scope . "\0" . key)` — a fixed 64 chars, so
-   scoped records are opaque. Records are separated exactly as far as scope
-   names differ: use `RequestTargetScopeResolver` for per-endpoint isolation,
-   since any resolver returning one name for two endpoints still shares one
-   namespace (which is the point of an explicit scope).
+   A malformed key (too long, illegal characters) coming off the request is a
+   400, not an unhandled exception. `MissingKeyException` still propagates.
 
-4. **Storage claim must be atomic.** `IdempotencyStorage::claim()` is a
+   Every key is namespaced by the middleware's required `scopeResolver` before
+   it reaches storage: `sha256(scope . "\0" . key)` — a fixed 64 chars, so
+   stored records are opaque. Records are separated exactly as far as scope
+   names differ.
+
+4. **The keyspace must be partitioned per caller.** `scopeResolver` has no
+   default: a keyspace shared across clients lets one client replay another
+   client's cached response, and the replay path returns the stored response
+   without entering the handler — so it never reaches the handler's
+   authorization checks either. Use `RequestAttributeScopeResolver` for a
+   multi-client API, `CompositeScopeResolver` to stack the endpoint dimension
+   (`RequestTargetScopeResolver`) on top. `SharedKeyspaceScopeResolver` is the
+   documented opt-out and is safe only when a single principal can reach the
+   middleware. Never make a shared keyspace the default again.
+
+   `Set-Cookie`, `Date` and hop-by-hop response headers are never captured nor
+   replayed — a session identifier must not sit in a storage row for the whole
+   TTL, and a stale cookie must not be handed back. That built-in list is always
+   applied; `additionalExcludedResponseHeaders` only extends it. Identifiers in
+   the response body or in other custom headers are not covered — exclude those
+   by name.
+
+5. **Storage claim must be atomic.** `IdempotencyStorage::claim()` is a
    compare-and-set; the `-db` backend implements it atomically.
    `InMemoryIdempotencyStorage` is a testing double — never wire it in
    production. `IdempotencyRecord::restore()` is the rehydration path storage
    adapters depend on — do not remove or bypass it.
 
-5. **DI pair: core + backend.** The core package does NOT bind
+6. **DI pair: core + backend.** The core package does NOT bind
    `IdempotencyStorage` — exactly one source binds it: the backend package
    (e.g. `rasuvaeff/yii3-idempotency-db`) or the application. Binding it in
    core config causes a `yiisoft/config` `Duplicate key` runtime error.
@@ -68,6 +87,7 @@ $middleware = new IdempotencyMiddleware(
     storage: $storage,                 // IdempotencyStorage implementation
     responseFactory: $responseFactory, // PSR-17
     clock: $clock,                     // PSR-20
+    scopeResolver: new RequestAttributeScopeResolver(attribute: 'user'), // REQUIRED
     policy: IdempotencyPolicy::PassThrough, // or Reject => 400 without key
     ttlSeconds: 3600,
 );
@@ -75,8 +95,10 @@ $middleware = new IdempotencyMiddleware(
 
 With the Yii3 config plugin, tune via `params.php` under
 `'rasuvaeff/yii3-idempotency'` (`headerName`, `policy`, `ttlSeconds`,
-`methods`, `scope`). `scope` accepts `null` (global), `'auto'`
-(`RequestTargetScopeResolver`) or an explicit scope name.
+`methods`, `callerAttribute`, `anonymousCaller`, `scope`). `callerAttribute` is
+required — a request-attribute name, or `false` for the shared-keyspace
+opt-out. `scope` accepts `'auto'` (`RequestTargetScopeResolver`), `null` (no
+endpoint dimension) or an explicit scope name.
 
 Keys can also come from the payload instead of a header:
 `new PayloadIdempotencyKeyExtractor('command.orderId')` — unresolvable paths

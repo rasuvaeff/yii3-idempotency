@@ -40,13 +40,33 @@ final readonly class IdempotencyScope implements IdempotencyScopeResolver
             );
         }
 
-        if (!preg_match(self::PATTERN, $name)) {
-            throw new \InvalidArgumentException(
-                'Idempotency scope contains control characters',
-            );
-        }
+        self::assertPrintable($name);
 
         $this->name = $name;
+    }
+
+    /**
+     * Like the constructor, but collapses an over-long name to its hash instead
+     * of rejecting it.
+     *
+     * A scope name assembled from request data — a long path, a long principal
+     * identifier, several dimensions joined together — must not turn a request
+     * into a 500 just for crossing the limit. The name is only ever hashed into
+     * a storage key, never stored or echoed, so a collapsed name partitions the
+     * keyspace exactly as well as the original.
+     *
+     * Length is the only relaxation: a control character is rejected at every
+     * length, because hashing must not launder a name the constructor refuses.
+     */
+    public static function of(string $name): self
+    {
+        if (\strlen($name) <= self::MAX_LENGTH) {
+            return new self($name);
+        }
+
+        self::assertPrintable($name);
+
+        return new self(hash('sha256', $name));
     }
 
     /**
@@ -69,5 +89,14 @@ final readonly class IdempotencyScope implements IdempotencyScopeResolver
     public function equals(self $other): bool
     {
         return $this->name === $other->name;
+    }
+
+    private static function assertPrintable(string $name): void
+    {
+        if (!preg_match(self::PATTERN, $name)) {
+            throw new \InvalidArgumentException(
+                'Idempotency scope contains control characters',
+            );
+        }
     }
 }

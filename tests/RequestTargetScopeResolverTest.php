@@ -72,6 +72,19 @@ final class RequestTargetScopeResolverTest
         Assert::false($orders->equals($payments));
     }
 
+    /**
+     * A path long enough to push the scope name past the 1024-character limit
+     * must not turn into a 500: the name is collapsed to its hash instead.
+     */
+    public function collapsesAnOverLongRequestTargetToAHash(): void
+    {
+        $path = '/' . str_repeat('p', 1200);
+
+        $scope = (new RequestTargetScopeResolver())->resolve(new FakeRequest(method: 'POST', path: $path));
+
+        Assert::same($scope->name, hash('sha256', 'POST ' . $path));
+    }
+
     #[Property(runs: 200)]
     public function acceptsAnyRealisticRequestTarget(string $method, string $path): void
     {

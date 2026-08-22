@@ -22,7 +22,7 @@ final readonly class RequestTargetScopeResolver implements IdempotencyScopeResol
     {
         $path = $request->getUri()->getPath();
 
-        return new IdempotencyScope(
+        return IdempotencyScope::of(
             strtoupper($request->getMethod()) . ' ' . ($path === '' ? '/' : $path),
         );
     }

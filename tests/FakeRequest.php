@@ -20,6 +20,7 @@ final class FakeRequest implements ServerRequestInterface
      * @param array<string, string|int|list<string>> $queryParams
      * @param array<string, list<string>> $headers
      * @param array<array-key, mixed>|object|null $parsedBody
+     * @param array<string, mixed> $attributes
      */
     public function __construct(
         private readonly string $method = 'POST',
@@ -30,6 +31,7 @@ final class FakeRequest implements ServerRequestInterface
         private readonly array $serverParams = [],
         private readonly array $queryParams = [],
         private readonly array|object|null $parsedBody = null,
+        private readonly array $attributes = [],
     ) {}
 
     #[\Override]
@@ -131,13 +133,17 @@ final class FakeRequest implements ServerRequestInterface
     #[\Override]
     public function getAttributes(): array
     {
-        return [];
+        return $this->attributes;
     }
 
     #[\Override]
-    public function getAttribute(string $name, $default = null): null
+    public function getAttribute(string $name, mixed $default = null): mixed
     {
-        return null;
+        // An explicitly set null is a value, not an absence: PSR-7 says the
+        // default applies only when the attribute was never set.
+        return \array_key_exists($name, $this->attributes)
+            ? $this->attributes[$name]
+            : $default;
     }
 
     #[\Override]

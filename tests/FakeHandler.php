@@ -15,12 +15,16 @@ final class FakeHandler implements RequestHandlerInterface
 {
     private int $callCount = 0;
 
+    /**
+     * @param array<string, string> $responseHeaders applied in order, after $responseHeader
+     */
     public function __construct(
         private readonly int $responseStatus = 200,
         private readonly string $responseBody = '{"ok":true}',
         private readonly string $responseHeader = '',
         private readonly string $responseHeaderValue = '',
         private readonly ?\Throwable $throwable = null,
+        private readonly array $responseHeaders = [],
     ) {}
 
     #[\Override]
@@ -39,6 +43,10 @@ final class FakeHandler implements RequestHandlerInterface
                 name: $this->responseHeader,
                 value: $this->responseHeaderValue,
             );
+        }
+
+        foreach ($this->responseHeaders as $name => $value) {
+            $response = $response->withHeader(name: $name, value: $value);
         }
 
         $response->getBody()->write($this->responseBody);

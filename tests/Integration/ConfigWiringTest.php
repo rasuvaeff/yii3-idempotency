@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests\Integration;
 
+use Rasuvaeff\Yii3Idempotency\CompositeScopeResolver;
 use Rasuvaeff\Yii3Idempotency\HeaderIdempotencyKeyExtractor;
+use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKeyExtractor;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
+use Rasuvaeff\Yii3Idempotency\IdempotencyScopeResolver;
 use Rasuvaeff\Yii3Idempotency\IdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
-use Rasuvaeff\Yii3Idempotency\ScopedIdempotencyKeyExtractor;
+use Rasuvaeff\Yii3Idempotency\RequestAttributeScopeResolver;
+use Rasuvaeff\Yii3Idempotency\SharedKeyspaceScopeResolver;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeClock;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeRequest;
 use Rasuvaeff\Yii3Idempotency\Tests\FakeResponseFactory;
@@ -27,7 +31,7 @@ use Testo\Test;
 #[CoversNothing]
 final class ConfigWiringTest
 {
-    public function bindsExtractorAliasAndMiddlewareOnly(): void
+    public function bindsExtractorAliasScopeResolverAndMiddlewareOnly(): void
     {
         $definitions = $this->loadDi([]);
 
@@ -36,6 +40,7 @@ final class ConfigWiringTest
             [
                 HeaderIdempotencyKeyExtractor::class,
                 IdempotencyKeyExtractor::class,
+                IdempotencyScopeResolver::class,
                 IdempotencyMiddleware::class,
             ],
         );
@@ -46,6 +51,80 @@ final class ConfigWiringTest
         Assert::array($this->loadDi([]))->doesNotHaveKeys(IdempotencyStorage::class);
     }
 
+    public function extractorIsAliasedToTheHeaderExtractor(): void
+    {
+        Assert::same($this->loadDi([])[IdempotencyKeyExtractor::class], HeaderIdempotencyKeyExtractor::class);
+    }
+
+    /**
+     * The whole point of the fail-closed default: an application that never
+     * decided how the keyspace is partitioned must not silently get one shared
+     * by every caller.
+     */
+    public function scopeResolverFactoryRefusesAnUnconfiguredCaller(): void
+    {
+        $factory = $this->loadDi([])[IdempotencyScopeResolver::class];
+        Assert::true(is_callable($factory));
+
+        try {
+            $factory();
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            Assert::string($e->getMessage())->contains('callerAttribute');
+        }
+    }
+
+    public function scopeResolverFactoryBuildsAPerCallerScope(): void
+    {
+        $resolver = $this->scopeResolver(['callerAttribute' => 'user', 'scope' => null]);
+
+        Assert::instanceOf($resolver, RequestAttributeScopeResolver::class);
+        Assert::same(
+            $resolver->resolve(new FakeRequest(attributes: ['user' => 'alice']))->name,
+            'caller:identity:alice',
+        );
+    }
+
+    public function scopeResolverFactoryHonoursTheAnonymousName(): void
+    {
+        $resolver = $this->scopeResolver([
+            'callerAttribute' => 'user',
+            'anonymousCaller' => 'guest',
+            'scope' => null,
+        ]);
+
+        Assert::same($resolver->resolve(new FakeRequest())->name, 'caller:anonymous:guest');
+    }
+
+    public function scopeResolverFactoryHonoursTheSharedOptOut(): void
+    {
+        $resolver = $this->scopeResolver(['callerAttribute' => false, 'scope' => null]);
+
+        Assert::instanceOf($resolver, SharedKeyspaceScopeResolver::class);
+    }
+
+    public function scopeResolverFactoryCombinesCallerAndAutoEndpointScope(): void
+    {
+        $resolver = $this->scopeResolver(['callerAttribute' => 'user']);
+
+        Assert::instanceOf($resolver, CompositeScopeResolver::class);
+        Assert::same(
+            $resolver->resolve(new FakeRequest(
+                method: 'POST',
+                path: '/api/orders',
+                attributes: ['user' => 'alice'],
+            ))->name,
+            '21:caller:identity:alice | 16:POST /api/orders',
+        );
+    }
+
+    public function scopeResolverFactoryCombinesCallerAndNamedScope(): void
+    {
+        $resolver = $this->scopeResolver(['callerAttribute' => false, 'scope' => 'orders']);
+
+        Assert::same($resolver->resolve(new FakeRequest())->name, '6:shared | 6:orders');
+    }
+
     public function middlewareFactoryBuildsMiddleware(): void
     {
         $definitions = $this->loadDi([
@@ -53,6 +132,7 @@ final class ConfigWiringTest
                 'headerName' => 'X-Request-Id',
                 'policy' => 'reject',
                 'ttlSeconds' => 60,
+                'callerAttribute' => 'user',
             ],
         ]);
 
@@ -65,6 +145,7 @@ final class ConfigWiringTest
             new InMemoryIdempotencyStorage($clock),
             new FakeResponseFactory(),
             $clock,
+            new SharedKeyspaceScopeResolver(),
         );
 
         Assert::instanceOf($middleware, IdempotencyMiddleware::class);
@@ -82,56 +163,40 @@ final class ConfigWiringTest
             new InMemoryIdempotencyStorage($clock),
             new FakeResponseFactory(),
             $clock,
+            new SharedKeyspaceScopeResolver(),
         );
 
         Assert::instanceOf($middleware, IdempotencyMiddleware::class);
     }
 
-    public function extractorFactoryReturnsTheBareExtractorWhenScopeIsAbsent(): void
+    /**
+     * The wiring, end to end: a key from the header, namespaced by the caller
+     * the application put in the request attribute.
+     */
+    public function wiredMiddlewareNamespacesTheKeyByCaller(): void
     {
-        $extractor = new HeaderIdempotencyKeyExtractor();
-        $factory = $this->loadDi([])[IdempotencyKeyExtractor::class];
-        Assert::true(is_callable($factory));
+        $resolver = $this->scopeResolver(['callerAttribute' => 'user', 'scope' => null]);
 
-        Assert::same($factory($extractor), $extractor);
+        Assert::same(
+            $resolver->resolve(new FakeRequest(attributes: ['user' => 'alice']))
+                ->apply(new IdempotencyKey('key-1'))
+                ->value,
+            hash('sha256', "caller:identity:alice\0key-1"),
+        );
     }
 
-    public function extractorFactoryAppliesAutoScope(): void
+    /**
+     * @param array<string, mixed> $config
+     */
+    private function scopeResolver(array $config): IdempotencyScopeResolver
     {
-        $factory = $this->loadDi([
-            'rasuvaeff/yii3-idempotency' => ['scope' => 'auto'],
-        ])[IdempotencyKeyExtractor::class];
+        $factory = $this->loadDi(['rasuvaeff/yii3-idempotency' => $config])[IdempotencyScopeResolver::class];
         Assert::true(is_callable($factory));
 
-        $extractor = $factory(new HeaderIdempotencyKeyExtractor());
-        Assert::instanceOf($extractor, ScopedIdempotencyKeyExtractor::class);
+        $resolver = $factory();
+        Assert::instanceOf($resolver, IdempotencyScopeResolver::class);
 
-        $key = $extractor->extract(new FakeRequest(
-            method: 'POST',
-            path: '/api/orders',
-            headers: ['idempotency-key' => ['key-1']],
-        ));
-
-        Assert::same($key?->value, hash('sha256', "POST /api/orders\0key-1"));
-    }
-
-    public function extractorFactoryAppliesANamedScope(): void
-    {
-        $factory = $this->loadDi([
-            'rasuvaeff/yii3-idempotency' => ['scope' => 'orders'],
-        ])[IdempotencyKeyExtractor::class];
-        Assert::true(is_callable($factory));
-
-        $extractor = $factory(new HeaderIdempotencyKeyExtractor());
-        Assert::instanceOf($extractor, ScopedIdempotencyKeyExtractor::class);
-
-        $key = $extractor->extract(new FakeRequest(
-            method: 'POST',
-            path: '/api/orders',
-            headers: ['idempotency-key' => ['key-1']],
-        ));
-
-        Assert::same($key?->value, hash('sha256', "orders\0key-1"));
+        return $resolver;
     }
 
     /**

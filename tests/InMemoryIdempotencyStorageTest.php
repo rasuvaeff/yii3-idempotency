@@ -165,6 +165,52 @@ final class InMemoryIdempotencyStorageTest
         ]))];
     }
 
+    /**
+     * The TTL boundary is `>=`: a record stops loading exactly at `expiresAt`,
+     * not a tick later. The examples pin the boundary itself; the random phase
+     * sweeps the rest of the range.
+     */
+    #[Property(runs: 200, timeoutMs: 2000)]
+    public function aRecordLoadsUntilItsTtlHasElapsed(int $ttlSeconds, int $advanceSeconds): void
+    {
+        Classify::cover($advanceSeconds < $ttlSeconds, 'still live', 20.0);
+        Classify::cover($advanceSeconds >= $ttlSeconds, 'expired', 20.0);
+
+        $clock = new FakeClock();
+        $storage = new InMemoryIdempotencyStorage($clock);
+        $key = new IdempotencyKey('key-1');
+
+        $storage->store(IdempotencyRecord::create(
+            key: $key,
+            fingerprint: new IdempotencyFingerprint('hash'),
+            response: new IdempotencyResponse(200, [], 'body'),
+            clock: $clock,
+            ttlSeconds: $ttlSeconds,
+        ));
+        $clock->advance($advanceSeconds);
+
+        Assert::same($storage->load($key) instanceof IdempotencyRecord, $advanceSeconds < $ttlSeconds);
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    public static function aRecordLoadsUntilItsTtlHasElapsedGenerators(): array
+    {
+        return [
+            'ttlSeconds' => Gen::intBetween(1, 3600),
+            'advanceSeconds' => Gen::intBetween(0, 3600),
+        ];
+    }
+
+    /** @return iterable<string, array{int, int}> */
+    public static function aRecordLoadsUntilItsTtlHasElapsedExamples(): iterable
+    {
+        yield 'one second before expiry' => [60, 59];
+        yield 'exactly at expiry' => [60, 60];
+        yield 'one second after expiry' => [60, 61];
+        yield 'shortest ttl, not yet elapsed' => [1, 0];
+        yield 'shortest ttl, elapsed' => [1, 1];
+    }
+
     private function createRecord(IdempotencyKey $key, int $ttlSeconds = 3600): IdempotencyRecord
     {
         return IdempotencyRecord::create(

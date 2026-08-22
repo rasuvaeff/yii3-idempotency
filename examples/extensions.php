@@ -9,15 +9,31 @@ use Rasuvaeff\Yii3Idempotency\FailureKind;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyScope;
 use Rasuvaeff\Yii3Idempotency\PayloadIdempotencyKeyExtractor;
+use Rasuvaeff\Yii3Idempotency\RequestAttributeScopeResolver;
 use Rasuvaeff\Yii3Idempotency\RetryableFailure;
 
-echo "== Key scoping ==\n";
+echo "== Caller scoping ==\n";
 
 $key = new IdempotencyKey('order-42');
+
+// RequestAttributeScopeResolver builds exactly these names out of the request
+// attribute holding the authenticated principal. They are spelled out here so
+// the example needs no PSR-7 implementation.
+$alice = new IdempotencyScope('caller:identity:alice');
+$mallory = new IdempotencyScope('caller:identity:mallory');
+
+echo "Raw key:            {$key->value}\n";
+echo "Alice's key:        {$alice->apply($key)->value}\n";
+echo "Mallory's key:      {$mallory->apply($key)->value}\n";
+echo 'Same storage key: '
+    . ($alice->apply($key)->equals($mallory->apply($key)) ? 'yes — cross-client replay!' : 'no') . "\n";
+echo 'Resolver: ' . RequestAttributeScopeResolver::class . "(attribute: 'user')\n";
+
+echo "\n== Endpoint scoping ==\n";
+
 $orders = new IdempotencyScope('orders');
 $payments = new IdempotencyScope('payments');
 
-echo "Raw key:            {$key->value}\n";
 echo "Scoped as orders:   {$orders->apply($key)->value}\n";
 echo "Scoped as payments: {$payments->apply($key)->value}\n";
 echo 'Same storage key: ' . ($orders->apply($key)->equals($payments->apply($key)) ? 'yes' : 'no') . "\n";
