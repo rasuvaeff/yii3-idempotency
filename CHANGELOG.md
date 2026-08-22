@@ -20,10 +20,13 @@
   unreachable under the new keys; the table is a TTL cache, so they simply
   expire.
 - `Set-Cookie`, `Date` and hop-by-hop response headers are no longer captured
-  nor replayed. A session identifier no longer sits in a storage row in
-  plaintext for the whole TTL, and a stale cookie is no longer handed back on
-  replay. The deny-list is configurable via the new `excludedResponseHeaders`
-  constructor argument.
+  nor replayed, so an identifier carried by one of them — a session cookie above
+  all — no longer sits in a storage row in plaintext for the whole TTL, and a
+  stale cookie is no longer handed back on replay. Identifiers in the response
+  body or in other custom headers are untouched: exclude those explicitly. The
+  deny-list can be extended via the new `additionalExcludedResponseHeaders`
+  constructor argument; it is added to the built-in list, which cannot be
+  switched off.
 - A malformed idempotency key from an untrusted request now answers 400 instead
   of raising an unhandled `InvalidArgumentException` (a 500). `MissingKeyException`
   keeps propagating — a `required: true` extractor raising it is a deliberate
@@ -31,7 +34,17 @@
   turned into a 400.
 - `IdempotencyScope::of()` builds a scope from a name of any length, collapsing
   one longer than 1024 characters to its hash. `RequestTargetScopeResolver` uses
-  it, so a very long request path no longer turns into a 500.
+  it, so a very long request path no longer turns into a 500 for its length.
+  Length is the only relaxation: a control character is still rejected at any
+  length, so hashing cannot launder a name the constructor refuses.
+- `CompositeScopeResolver` length-prefixes every component before joining them.
+  The separator is legal inside a scope name, so a plain join was not injective:
+  `['a | b', 'c']` and `['a', 'b | c']` produced the same scope, and therefore
+  the same storage key.
+- `RequestAttributeScopeResolver` encodes the caller *state* as well as the
+  identity (`caller:identity:<id>` against `caller:anonymous:<name>`). An
+  authenticated caller whose identity equalled the anonymous name used to land
+  in the namespace every unauthenticated request shares.
 - Raised `rasuvaeff/property-testing-testo` to `^0.6`.
 
 - Failure classification and domain-failure caching: `FailureKind`,

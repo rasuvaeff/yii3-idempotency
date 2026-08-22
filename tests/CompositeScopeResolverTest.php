@@ -38,14 +38,49 @@ final class CompositeScopeResolverTest
             attributes: ['user' => 'alice'],
         ));
 
-        Assert::same($scope->name, 'caller:alice | POST /api/payments');
+        Assert::same($scope->name, '21:caller:identity:alice | 18:POST /api/payments');
     }
 
-    public function aSingleResolverPassesItsNameThrough(): void
+    /**
+     * A single component is length-prefixed too: a pass-through would let a lone
+     * resolver whose name reads `5:alpha | 4:beta` collide with the composition
+     * of `alpha` and `beta`.
+     */
+    public function aSingleResolverIsLengthPrefixedToo(): void
     {
         $resolver = new CompositeScopeResolver(new IdempotencyScope('billing'));
 
-        Assert::same($resolver->resolve(new FakeRequest())->name, 'billing');
+        Assert::same($resolver->resolve(new FakeRequest())->name, '7:billing');
+    }
+
+    /**
+     * Regression for the non-injective join: the separator is legal inside a
+     * scope name, so `['a | b', 'c']` and `['a', 'b | c']` produced one name —
+     * and therefore one shared idempotency record.
+     */
+    public function componentsCarryingTheSeparatorStayDistinct(): void
+    {
+        $left = (new CompositeScopeResolver(new IdempotencyScope('a | b'), new IdempotencyScope('c')))
+            ->resolve(new FakeRequest());
+        $right = (new CompositeScopeResolver(new IdempotencyScope('a'), new IdempotencyScope('b | c')))
+            ->resolve(new FakeRequest());
+
+        Assert::same($left->name, '5:a | b | 1:c');
+        Assert::same($right->name, '1:a | 5:b | c');
+        Assert::false($left->equals($right));
+    }
+
+    /**
+     * The same collision one dimension further: a colon is legal in a name, so
+     * the length prefix — not the colon — is what keeps the parts apart.
+     */
+    public function aComponentThatMimicsTheEncodingStaysDistinct(): void
+    {
+        $left = (new CompositeScopeResolver(new IdempotencyScope('1:a | 1:b')))->resolve(new FakeRequest());
+        $right = (new CompositeScopeResolver(new IdempotencyScope('a'), new IdempotencyScope('b')))
+            ->resolve(new FakeRequest());
+
+        Assert::false($left->equals($right));
     }
 
     public function rejectsAnEmptyComposition(): void
@@ -71,7 +106,7 @@ final class CompositeScopeResolverTest
 
         $scope = $resolver->resolve(new FakeRequest());
 
-        Assert::same($scope->name, hash('sha256', $left . ' | ' . $right));
+        Assert::same($scope->name, hash('sha256', '600:' . $left . ' | 600:' . $right));
     }
 
     public function collapsedCompositionsStayDistinct(): void

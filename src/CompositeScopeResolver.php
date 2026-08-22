@@ -35,11 +35,24 @@ final readonly class CompositeScopeResolver implements IdempotencyScopeResolver
         $this->resolvers = $resolvers;
     }
 
+    /**
+     * Every component is length-prefixed before it is joined.
+     *
+     * The separator is legal *inside* a scope name, so a plain join is not
+     * injective: `['a | b', 'c']` and `['a', 'b | c']` produce the same name,
+     * and therefore the same scoped storage key — two different callers or
+     * endpoints sharing one idempotency record. `<length>:<name>` makes the
+     * composition decodable, so distinct ordered inputs stay distinct.
+     */
     #[\Override]
     public function resolve(ServerRequestInterface $request): IdempotencyScope
     {
         $name = implode(self::SEPARATOR, array_map(
-            static fn(IdempotencyScopeResolver $resolver): string => $resolver->resolve($request)->name,
+            static function (IdempotencyScopeResolver $resolver) use ($request): string {
+                $part = $resolver->resolve($request)->name;
+
+                return \strlen($part) . ':' . $part;
+            },
             $this->resolvers,
         ));
 

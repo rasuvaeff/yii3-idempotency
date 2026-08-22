@@ -195,6 +195,21 @@ final class IdempotencyScopeTest
         }
     }
 
+    /**
+     * Regression: control characters used to be checked only on the *collapsed*
+     * name, so an over-long name carrying one was hashed and accepted while a
+     * short one with the same character threw.
+     */
+    public function ofRejectsControlCharactersInAnOverLongName(): void
+    {
+        try {
+            IdempotencyScope::of(str_repeat('a', 1024) . "\n");
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException $e) {
+            Assert::string($e->getMessage())->contains('control characters');
+        }
+    }
+
     public function ofKeepsOverLongNamesDistinct(): void
     {
         $left = IdempotencyScope::of(str_repeat('a', 2000));

@@ -15,9 +15,10 @@ use Psr\Http\Message\ServerRequestInterface;
  * and the replay path never reaches the handler, so it never reaches the
  * handler's authorization checks either.
  *
- * A request that carries no caller resolves to {@see self::DEFAULT_ANONYMOUS}.
- * Anonymous callers therefore share one namespace among themselves: there is no
- * identity to separate them by. Do not expose an endpoint that returns
+ * A request that carries no caller resolves to a namespace of its own, built
+ * from {@see self::DEFAULT_ANONYMOUS} and never reachable by an authenticated
+ * caller. Anonymous callers do share that one namespace among themselves: there
+ * is no identity to separate them by. Do not expose an endpoint that returns
  * caller-private data to anonymous requests under an idempotency key.
  *
  * @api
@@ -33,6 +34,16 @@ final readonly class RequestAttributeScopeResolver implements IdempotencyScopeRe
      * endpoint scope cannot produce the same name from a different dimension.
      */
     private const string PREFIX = 'caller:';
+
+    /**
+     * The caller state is part of the name, not only the identity: without it an
+     * authenticated caller whose identity happens to equal {@see $anonymous}
+     * lands in the namespace every unauthenticated request already shares, and
+     * either side can replay or occupy the other's record.
+     */
+    private const string IDENTITY_TAG = 'identity:';
+
+    private const string ANONYMOUS_TAG = 'anonymous:';
 
     /**
      * @var non-empty-string
@@ -86,17 +97,19 @@ final readonly class RequestAttributeScopeResolver implements IdempotencyScopeRe
     private function identityName(mixed $value): string
     {
         if ($value === null) {
-            return $this->anonymous;
+            return self::ANONYMOUS_TAG . $this->anonymous;
         }
 
         if (\is_int($value)) {
-            return (string) $value;
+            return self::IDENTITY_TAG . $value;
         }
 
         if (\is_string($value) || $value instanceof \Stringable) {
             $name = (string) $value;
 
-            return $name === '' ? $this->anonymous : $name;
+            return $name === ''
+                ? self::ANONYMOUS_TAG . $this->anonymous
+                : self::IDENTITY_TAG . $name;
         }
 
         // Not client input: the application decides what it puts in the

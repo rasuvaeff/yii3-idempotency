@@ -79,7 +79,10 @@ final class ConfigWiringTest
         $resolver = $this->scopeResolver(['callerAttribute' => 'user', 'scope' => null]);
 
         Assert::instanceOf($resolver, RequestAttributeScopeResolver::class);
-        Assert::same($resolver->resolve(new FakeRequest(attributes: ['user' => 'alice']))->name, 'caller:alice');
+        Assert::same(
+            $resolver->resolve(new FakeRequest(attributes: ['user' => 'alice']))->name,
+            'caller:identity:alice',
+        );
     }
 
     public function scopeResolverFactoryHonoursTheAnonymousName(): void
@@ -90,7 +93,7 @@ final class ConfigWiringTest
             'scope' => null,
         ]);
 
-        Assert::same($resolver->resolve(new FakeRequest())->name, 'caller:guest');
+        Assert::same($resolver->resolve(new FakeRequest())->name, 'caller:anonymous:guest');
     }
 
     public function scopeResolverFactoryHonoursTheSharedOptOut(): void
@@ -111,7 +114,7 @@ final class ConfigWiringTest
                 path: '/api/orders',
                 attributes: ['user' => 'alice'],
             ))->name,
-            'caller:alice | POST /api/orders',
+            '21:caller:identity:alice | 16:POST /api/orders',
         );
     }
 
@@ -119,7 +122,7 @@ final class ConfigWiringTest
     {
         $resolver = $this->scopeResolver(['callerAttribute' => false, 'scope' => 'orders']);
 
-        Assert::same($resolver->resolve(new FakeRequest())->name, 'shared | orders');
+        Assert::same($resolver->resolve(new FakeRequest())->name, '6:shared | 6:orders');
     }
 
     public function middlewareFactoryBuildsMiddleware(): void
@@ -178,7 +181,7 @@ final class ConfigWiringTest
             $resolver->resolve(new FakeRequest(attributes: ['user' => 'alice']))
                 ->apply(new IdempotencyKey('key-1'))
                 ->value,
-            hash('sha256', "caller:alice\0key-1"),
+            hash('sha256', "caller:identity:alice\0key-1"),
         );
     }
 

@@ -98,7 +98,8 @@ $middleware = new IdempotencyMiddleware(
     methods: ['POST', 'PUT', 'PATCH'],
     domainFailureRenderer: null,  // DomainFailureRenderer|null — null keeps every throwable retryable
     failureClassifier: null,      // FailureClassifier|null — defaults to DefaultFailureClassifier
-    excludedResponseHeaders: null, // list<string>|null — null keeps the built-in deny-list
+    additionalExcludedResponseHeaders: [], // list<string> — ADDED to the built-in deny-list
+                                           // (set-cookie, date, hop-by-hop); it cannot be switched off
 );
 ```
 
@@ -126,6 +127,7 @@ $scope->apply($key);                       // IdempotencyKey(sha256(name . "\0" 
 $scope->equals($other);                    // bool
 
 IdempotencyScope::of($name);               // like the constructor, but collapses a name > 1024 chars to its hash
+                                           // control characters are still rejected at any length
 
 $extractor = new ScopedIdempotencyKeyExtractor(  // kept for compatibility; scope the middleware instead
     extractor: new HeaderIdempotencyKeyExtractor(),
@@ -141,7 +143,8 @@ new RequestAttributeScopeResolver(
     attribute: 'user',        // request attribute holding the principal; default 'user'
     anonymous: 'anonymous',   // scope for requests carrying no principal
     identity: null,           // Closure(mixed): string|int|Stringable|null — for a user object
-);                            // scope name = "caller:<identity>"
+);                            // scope name = "caller:identity:<id>", or "caller:anonymous:<name>"
+                              // when the attribute is absent or empty — the two never collide
 
 // documented opt-out: every caller in one keyspace (pre-2.0 behaviour)
 new SharedKeyspaceScopeResolver();  // scope name = "shared"
@@ -150,7 +153,9 @@ new SharedKeyspaceScopeResolver();  // scope name = "shared"
 new CompositeScopeResolver(
     new RequestAttributeScopeResolver(attribute: 'user'),
     new RequestTargetScopeResolver(),
-);                            // scope name = "caller:alice | POST /api/orders"
+);                            // scope name = "21:caller:identity:alice | 16:POST /api/orders"
+                              // every component is length-prefixed, so the separator inside a
+                              // name cannot merge two different compositions
 ```
 
 An attribute value that is not string/int/Stringable/null throws

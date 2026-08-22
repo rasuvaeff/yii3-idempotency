@@ -63,7 +63,10 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
 
    `Set-Cookie`, `Date` and hop-by-hop response headers are never captured nor
    replayed — a session identifier must not sit in a storage row for the whole
-   TTL, and a stale cookie must not be handed back.
+   TTL, and a stale cookie must not be handed back. That built-in list is always
+   applied; `additionalExcludedResponseHeaders` only extends it. Identifiers in
+   the response body or in other custom headers are not covered — exclude those
+   by name.
 
 5. **Storage claim must be atomic.** `IdempotencyStorage::claim()` is a
    compare-and-set; the `-db` backend implements it atomically.

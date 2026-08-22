@@ -95,15 +95,27 @@ make release-check
   is kept for compatibility; do not route new work through it.
 - `IdempotencyScope::of()` collapses a name longer than 1024 characters to its
   hash instead of throwing. Every resolver that builds a name out of request
-  data must use it — the constructor throwing there would be a client-triggered
-  500.
+  data must use it — the constructor throwing on *length* there would be a
+  client-triggered 500. Length is the only relaxation: control characters are
+  validated on the original name, before any hashing, so an over-long name can
+  never launder a value the constructor refuses.
+- `CompositeScopeResolver` length-prefixes each component (`<len>:<name>`) before
+  joining with `' | '`. The separator is legal inside a scope name, so a plain
+  join is not injective and two different compositions would share one storage
+  key. Any change to the join must keep it decodable.
+- `RequestAttributeScopeResolver` encodes caller *state*, not just identity:
+  `caller:identity:<id>` against `caller:anonymous:<name>`. Dropping the tag puts
+  an authenticated caller identified as `anonymous` into the shared anonymous
+  namespace.
 - The 400-on-malformed-key guard wraps ONLY `keyExtractor->extract()`. The scope
   resolver runs outside it: its failures come from what the application put in a
   request attribute, and reporting a deployment error as a bad request would
   hide it.
-- `captureHeaders()` drops `Set-Cookie`, `Date` and hop-by-hop headers. Anything
-  added to the deny-list must also stay out of `replayResponse()` by
-  construction — the replay only knows what was captured.
+- `captureHeaders()` always drops `Set-Cookie`, `Date` and hop-by-hop headers;
+  `additionalExcludedResponseHeaders` only extends that list and must never be
+  able to replace it — hiding one custom header must not re-enable storing and
+  replaying `Set-Cookie`. Anything added to the deny-list also stays out of
+  `replayResponse()` by construction — the replay only knows what was captured.
 - `PayloadIdempotencyKeyExtractor` throws `MissingKeyException` from `extract()`,
   which runs *before* the claim — there is nothing to release and the classifier
   never sees it. It is a `RuntimeException`, so the 400 guard (which catches only

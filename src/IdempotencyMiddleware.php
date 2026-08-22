@@ -28,6 +28,9 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
      * session identifier does not belong in a storage row for the whole TTL,
      * and a replayed one is stale at best.
      *
+     * Always applied. A caller-supplied list only extends it, so no
+     * configuration can bring `Set-Cookie` back into storage.
+     *
      * @var list<non-empty-string>
      */
     private const array DEFAULT_EXCLUDED_RESPONSE_HEADERS = [
@@ -65,8 +68,11 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
      * @param DomainFailureRenderer|null $domainFailureRenderer renders domain failures so they can be cached;
      *                                                          `null` keeps every thrown failure retryable
      * @param FailureClassifier|null $failureClassifier defaults to {@see DefaultFailureClassifier}
-     * @param list<string>|null $excludedResponseHeaders response headers never captured nor replayed;
-     *                                                   `null` keeps the built-in list
+     * @param list<string> $additionalExcludedResponseHeaders further response headers never captured nor
+     *                                                        replayed; they are *added* to the built-in
+     *                                                        list, which cannot be switched off — hiding
+     *                                                        one header of your own must never re-enable
+     *                                                        storing and replaying `Set-Cookie`
      */
     public function __construct(
         private IdempotencyKeyExtractor $keyExtractor,
@@ -79,7 +85,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         array $methods = ['POST', 'PUT', 'PATCH'],
         private ?DomainFailureRenderer $domainFailureRenderer = null,
         ?FailureClassifier $failureClassifier = null,
-        ?array $excludedResponseHeaders = null,
+        array $additionalExcludedResponseHeaders = [],
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
             throw new \InvalidArgumentException('TTL seconds must be greater than 0');
@@ -88,9 +94,9 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         $this->methods = array_map(strtoupper(...), $methods);
         $this->failureClassifier = $failureClassifier ?? new DefaultFailureClassifier();
 
-        $this->excludedResponseHeaders = array_map(
-            strtolower(...),
-            $excludedResponseHeaders ?? self::DEFAULT_EXCLUDED_RESPONSE_HEADERS,
+        $this->excludedResponseHeaders = array_merge(
+            self::DEFAULT_EXCLUDED_RESPONSE_HEADERS,
+            array_map(strtolower(...), $additionalExcludedResponseHeaders),
         );
     }
 

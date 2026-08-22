@@ -12,8 +12,11 @@ return [
         // A request-attribute name (for example 'user'): keys are namespaced by the
         // authenticated principal found there, so one client can never replay another
         // client's cached response.
-        // false: every caller shares one keyspace (the 1.x behaviour). Only safe for a
-        // single-tenant deployment or a fully trusted single client.
+        // false: every caller shares one keyspace. Only safe for a single-tenant
+        // deployment or a fully trusted single client. On its own it does NOT reproduce
+        // the 1.x keyspace: 'scope' below still defaults to 'auto' and adds the endpoint
+        // namespace. For the 1.x keys you need both — 'callerAttribute' => false AND
+        // 'scope' => null.
         'callerAttribute' => null,
         // Scope name for requests that carry no principal; they share it among
         // themselves, because there is no identity to separate them by.

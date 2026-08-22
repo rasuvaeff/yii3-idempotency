@@ -19,8 +19,8 @@ $key = new IdempotencyKey('order-42');
 // RequestAttributeScopeResolver builds exactly these names out of the request
 // attribute holding the authenticated principal. They are spelled out here so
 // the example needs no PSR-7 implementation.
-$alice = new IdempotencyScope('caller:alice');
-$mallory = new IdempotencyScope('caller:mallory');
+$alice = new IdempotencyScope('caller:identity:alice');
+$mallory = new IdempotencyScope('caller:identity:mallory');
 
 echo "Raw key:            {$key->value}\n";
 echo "Alice's key:        {$alice->apply($key)->value}\n";

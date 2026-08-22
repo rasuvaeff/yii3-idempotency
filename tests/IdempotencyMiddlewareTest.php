@@ -997,7 +997,7 @@ final class IdempotencyMiddlewareTest
         Assert::same($replay->getHeader('X-Trace-Id'), ['trace-1']);
     }
 
-    public function excludedResponseHeadersAreConfigurable(): void
+    public function additionalExcludedResponseHeadersAreConfigurable(): void
     {
         $middleware = new IdempotencyMiddleware(
             keyExtractor: $this->extractor,
@@ -1005,7 +1005,7 @@ final class IdempotencyMiddlewareTest
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
             scopeResolver: new SharedKeyspaceScopeResolver(),
-            excludedResponseHeaders: ['X-Secret'],
+            additionalExcludedResponseHeaders: ['X-Secret'],
         );
         $handler = new FakeHandler(responseHeader: 'X-Secret', responseHeaderValue: 'shh');
 
@@ -1013,6 +1013,60 @@ final class IdempotencyMiddlewareTest
         $replay = $middleware->process($this->keyedRequest(), $handler);
 
         Assert::same($replay->getHeader('X-Secret'), []);
+    }
+
+    /**
+     * Regression: the argument used to *replace* the built-in list, so hiding
+     * one header of your own silently re-enabled storing and replaying
+     * `Set-Cookie` and every hop-by-hop header.
+     */
+    public function aCustomListNeverReEnablesTheBuiltInExclusions(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+            additionalExcludedResponseHeaders: ['X-Secret'],
+        );
+        $handler = new FakeHandler(responseHeaders: [
+            'X-Secret' => 'shh',
+            'Set-Cookie' => 'PHPSESSID=secret',
+            'Connection' => 'keep-alive',
+            'X-Trace-Id' => 'trace-1',
+        ]);
+
+        $middleware->process($this->keyedRequest(), $handler);
+        $replay = $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($handler->getCallCount(), 1);
+        Assert::same($replay->getHeader('X-Secret'), []);
+        Assert::same($replay->getHeader('Set-Cookie'), []);
+        Assert::same($replay->getHeader('Connection'), []);
+        Assert::same($replay->getHeader('X-Trace-Id'), ['trace-1']);
+    }
+
+    /**
+     * An empty list is the default and must behave exactly like the built-in
+     * one — the caller-supplied names only ever extend it.
+     */
+    public function anEmptyAdditionalListKeepsTheBuiltInExclusions(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+            additionalExcludedResponseHeaders: [],
+        );
+        $handler = new FakeHandler(responseHeader: 'Set-Cookie', responseHeaderValue: 'PHPSESSID=secret');
+
+        $middleware->process($this->keyedRequest(), $handler);
+        $replay = $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($replay->getHeader('Set-Cookie'), []);
     }
 
     /**

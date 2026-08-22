@@ -32,19 +32,22 @@ final class RequestAttributeScopeResolverTest
 
         $scope = $resolver->resolve(new FakeRequest(attributes: ['principal' => 'alice']));
 
-        Assert::same($scope->name, 'caller:alice');
+        Assert::same($scope->name, 'caller:identity:alice');
     }
 
     public function fallsBackToAnonymousWhenTheAttributeIsAbsent(): void
     {
-        Assert::same((new RequestAttributeScopeResolver())->resolve(new FakeRequest())->name, 'caller:anonymous');
+        Assert::same(
+            (new RequestAttributeScopeResolver())->resolve(new FakeRequest())->name,
+            'caller:anonymous:anonymous',
+        );
     }
 
     public function anonymousNameIsConfigurable(): void
     {
         $resolver = new RequestAttributeScopeResolver(anonymous: 'guest');
 
-        Assert::same($resolver->resolve(new FakeRequest())->name, 'caller:guest');
+        Assert::same($resolver->resolve(new FakeRequest())->name, 'caller:anonymous:guest');
     }
 
     /**
@@ -60,13 +63,13 @@ final class RequestAttributeScopeResolverTest
 
     public static function identityProvider(): iterable
     {
-        yield 'string' => ['alice', 'caller:alice'];
-        yield 'int' => [42, 'caller:42'];
-        yield 'zero' => [0, 'caller:0'];
-        yield 'empty string falls back' => ['', 'caller:anonymous'];
-        yield 'null falls back' => [null, 'caller:anonymous'];
-        yield 'stringable' => [new StringableIdentity('bob'), 'caller:bob'];
-        yield 'empty stringable falls back' => [new StringableIdentity(''), 'caller:anonymous'];
+        yield 'string' => ['alice', 'caller:identity:alice'];
+        yield 'int' => [42, 'caller:identity:42'];
+        yield 'zero' => [0, 'caller:identity:0'];
+        yield 'empty string falls back' => ['', 'caller:anonymous:anonymous'];
+        yield 'null falls back' => [null, 'caller:anonymous:anonymous'];
+        yield 'stringable' => [new StringableIdentity('bob'), 'caller:identity:bob'];
+        yield 'empty stringable falls back' => [new StringableIdentity(''), 'caller:anonymous:anonymous'];
     }
 
     public function mapsAnObjectThroughTheIdentityClosure(): void
@@ -80,7 +83,7 @@ final class RequestAttributeScopeResolverTest
         $user = new \stdClass();
         $user->id = 7;
 
-        Assert::same($resolver->resolve(new FakeRequest(attributes: ['user' => $user]))->name, 'caller:7');
+        Assert::same($resolver->resolve(new FakeRequest(attributes: ['user' => $user]))->name, 'caller:identity:7');
     }
 
     public function rejectsAnIdentityItCannotStringify(): void
@@ -153,6 +156,38 @@ final class RequestAttributeScopeResolverTest
         yield 'caller vs anonymous fallback' => ['anonymous', 'a', 'order-123'];
         // The scenario from the report: a guessable key and a guessable payload.
         yield 'victim and attacker' => ['victim', 'attacker', 'order-123'];
+    }
+
+    /**
+     * Regression: an authenticated caller whose identity equals the anonymous
+     * name used to resolve to the anonymous namespace — with the defaults both
+     * were `caller:anonymous`, so either side could replay or occupy the
+     * other's record.
+     */
+    public function anAuthenticatedCallerNeverLandsInTheAnonymousNamespace(): void
+    {
+        $resolver = new RequestAttributeScopeResolver();
+
+        $absent = $resolver->resolve(new FakeRequest());
+        $named = $resolver->resolve(new FakeRequest(attributes: ['user' => 'anonymous']));
+
+        Assert::same($absent->name, 'caller:anonymous:anonymous');
+        Assert::same($named->name, 'caller:identity:anonymous');
+        Assert::false($absent->equals($named));
+    }
+
+    /**
+     * The same collision through the configured anonymous name.
+     */
+    public function aCallerNamedLikeTheConfiguredAnonymousStaysSeparate(): void
+    {
+        $resolver = new RequestAttributeScopeResolver(anonymous: 'guest');
+        $key = new IdempotencyKey('order-123');
+
+        $absent = $resolver->resolve(new FakeRequest())->apply($key);
+        $named = $resolver->resolve(new FakeRequest(attributes: ['user' => 'guest']))->apply($key);
+
+        Assert::false($absent->equals($named));
     }
 
     /**

@@ -135,7 +135,10 @@ scopeResolver: new RequestAttributeScopeResolver(
 
 A request with no principal resolves to the `anonymous` namespace, which every
 anonymous caller shares — there is no identity to separate them by. Do not put
-caller-private data behind an idempotent endpoint reachable anonymously.
+caller-private data behind an idempotent endpoint reachable anonymously. The
+namespace is tagged by caller state (`caller:identity:<id>` against
+`caller:anonymous:<name>`), so an authenticated caller whose identifier happens
+to read `anonymous` never lands in it.
 
 **Opt-out.** `SharedKeyspaceScopeResolver` puts every caller in one keyspace,
 which is the pre-2.0 behaviour. It is safe only when a single principal can
@@ -177,7 +180,14 @@ a long-but-valid client key can never be pushed past the 255-character limit.
 Stored keys are therefore opaque: scoping trades greppable keys for collision
 freedom. A scope name that would itself exceed 1024 characters (a long path, a
 long principal identifier, several dimensions joined) is collapsed to its hash
-rather than rejected, so request data can never turn into a 500.
+rather than rejected, so request data cannot turn a request into a 500 by its
+length alone. Other resolution failures — an attribute holding a value the
+resolver cannot stringify, for example — still surface as errors: they are
+deployment mistakes, not client input.
+
+Each dimension is length-prefixed before the parts are joined (`21:caller:identity:alice | 16:POST /api/orders`),
+so the separator appearing inside a name cannot make two different compositions
+resolve to one scope.
 
 `ScopedIdempotencyKeyExtractor` still applies a scope at the extractor level and
 is kept for compatibility, but scoping the middleware is the supported way: it
@@ -257,7 +267,7 @@ caching on. `FailureClassifier` needs wiring only to override
 ## Security
 
 - Keys are namespaced by the caller: `scopeResolver` is a required constructor argument, so a keyspace shared across clients is a deliberate, documented choice (`SharedKeyspaceScopeResolver`) and never an accident. Without it one client can replay another client's cached response, and the replay path never enters the handler — never reaching its authorization checks
-- `Set-Cookie`, `Date` and hop-by-hop response headers are never captured, so a session identifier does not end up in a storage row for the whole TTL and a stale cookie is never replayed. The list is a constructor argument if you need more
+- `Set-Cookie`, `Date` and hop-by-hop response headers are never captured, so an identifier carried by one of *those* headers — a session cookie above all — does not end up in a storage row for the whole TTL and a stale cookie is never replayed. Identifiers in the response body or in your own headers are stored and replayed as-is: name them in `additionalExcludedResponseHeaders`, which extends the built-in list and cannot switch it off
 - A malformed key from an untrusted request answers 400, not 500 — a client cannot generate unhandled exceptions with one header
 - Fingerprint includes method, path, query string, and body — prevents payload substitution
 - Request body stream is rewound after fingerprinting — handlers can re-read it
