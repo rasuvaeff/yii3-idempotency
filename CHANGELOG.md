@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.1 — 2026-08-25
 
 - Non-seekable request bodies are no longer drained for the handler: the
   middleware restores the content with a fresh seekable stream before taking
