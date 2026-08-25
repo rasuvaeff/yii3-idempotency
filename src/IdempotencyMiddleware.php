@@ -358,9 +358,8 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
     {
         $stream = $request->getBody();
 
+        // A seekable body is left alone: the fingerprint drains and rewinds it.
         if ($stream->isSeekable()) {
-            $stream->rewind();
-
             return $request;
         }
 

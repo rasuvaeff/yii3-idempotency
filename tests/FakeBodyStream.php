@@ -25,6 +25,13 @@ final class FakeBodyStream implements StreamInterface
         return $this->data;
     }
 
+    private function assertSeekable(): void
+    {
+        if (!$this->seekable) {
+            throw new \RuntimeException('Stream is not seekable');
+        }
+    }
+
     #[\Override]
     public function close(): void {}
 
@@ -61,12 +68,14 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function seek(int $offset, int $whence = SEEK_SET): void
     {
+        $this->assertSeekable();
         $this->position = $offset;
     }
 
     #[\Override]
     public function rewind(): void
     {
+        $this->assertSeekable();
         $this->position = 0;
     }
 

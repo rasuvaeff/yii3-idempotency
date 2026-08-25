@@ -213,6 +213,27 @@ final class IdempotencyMiddlewareTest
         Assert::same((string) $capturing->received->getBody(), '{"a":1}');
     }
 
+    public function seekableRequestBodyIsPassedThroughUntouched(): void
+    {
+        $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{"a":1}', headers: ['idempotency-key' => ['k']]);
+        $sent = $request->getBody();
+        $capturing = new class implements RequestHandlerInterface {
+            public ServerRequestInterface $received;
+
+            #[\Override]
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->received = $request;
+
+                return new FakeResponse(200);
+            }
+        };
+
+        $this->middleware->process($request, $capturing);
+
+        Assert::same($capturing->received->getBody(), $sent);
+    }
+
     public function replayMatchesFingerprintOfANonSeekableRequestBody(): void
     {
         $first = (new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']]))
@@ -241,7 +262,7 @@ final class IdempotencyMiddlewareTest
         $response = $this->middleware->process($request, $handler);
 
         Assert::same($response->getStatusCode(), 201);
-        Assert::string((string) $response->getBody())->contains('{"id":9}');
+        Assert::same($response->getBody()->getContents(), '{"id":9}');
     }
 
     public function replayIsCompleteAfterANonSeekableOriginalResponse(): void
