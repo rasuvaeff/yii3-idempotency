@@ -15,6 +15,7 @@ final class FakeBodyStream implements StreamInterface
 
     public function __construct(
         private readonly string $data = '',
+        private readonly bool $seekable = true,
     ) {}
 
     public function __toString(): string
@@ -22,6 +23,13 @@ final class FakeBodyStream implements StreamInterface
         $this->position = strlen($this->data);
 
         return $this->data;
+    }
+
+    private function assertSeekable(): void
+    {
+        if (!$this->seekable) {
+            throw new \RuntimeException('Stream is not seekable');
+        }
     }
 
     #[\Override]
@@ -54,18 +62,20 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function isSeekable(): bool
     {
-        return true;
+        return $this->seekable;
     }
 
     #[\Override]
     public function seek(int $offset, int $whence = SEEK_SET): void
     {
+        $this->assertSeekable();
         $this->position = $offset;
     }
 
     #[\Override]
     public function rewind(): void
     {
+        $this->assertSeekable();
         $this->position = 0;
     }
 

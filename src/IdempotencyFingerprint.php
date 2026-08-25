@@ -32,6 +32,6 @@ final readonly class IdempotencyFingerprint
 
     public function equals(self $other): bool
     {
-        return $this->hash === $other->hash;
+        return hash_equals($this->hash, $other->hash);
     }
 }

@@ -68,7 +68,12 @@ make release-check
 
 - `IdempotencyKey` validates: 1-255 chars, pattern `/^[A-Za-z0-9._-]+\z/` (`\z`, not `$` — PCRE `$` matches before a trailing `\n`).
 - Fingerprint: `sha256(method + "\n" + path + "\n" + query + "\n" + body)`; the body
-  stream is rewound after reading (when seekable).
+  stream is rewound after reading (when seekable). A **non-seekable** request
+  body is restored with a fresh seekable `BufferedStream` *before* the
+  fingerprint drains it — otherwise the handler receives an already-drained
+  stream; the same restoration applies to a drained non-seekable response body,
+  so the first client gets the full body, not just every replay.
+  Fingerprint comparison goes through `hash_equals()` — never `===`.
 - Conflict semantics: 422 for payload mismatch, 409 for an in-flight duplicate.
 - Only 2xx handler responses are cached; any non-2xx (3xx/4xx — incl. retryable
   409/423/429 — and 5xx) releases the claim instead, so transient failures stay

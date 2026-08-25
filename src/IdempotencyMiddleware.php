@@ -129,6 +129,12 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         // a deployment error that must not be reported as a bad request.
         $key = $this->scopeResolver->resolve($request)->apply($key);
 
+        // A non-seekable request body cannot be rewound after the fingerprint
+        // drains it — the handler would receive an empty stream. Put the
+        // content back into the message first, so both the fingerprint and
+        // the handler see an intact body.
+        $request = $this->withIntactRequestBody($request);
+
         $fingerprint = IdempotencyFingerprint::fromRequest($request);
 
         $existing = $this->storage->load($key);
@@ -170,10 +176,12 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         }
 
         try {
+            [$captured, $response] = $this->captureResponse($response);
+
             $this->storage->store(IdempotencyRecord::create(
                 key: $key,
                 fingerprint: $fingerprint,
-                response: $this->captureResponse($response),
+                response: $captured,
                 clock: $this->clock,
                 ttlSeconds: $this->ttlSeconds,
             ));
@@ -263,10 +271,12 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             return null;
         }
 
+        [$captured, $response] = $this->captureResponse($response);
+
         $this->storage->store(IdempotencyRecord::create(
             key: $key,
             fingerprint: $fingerprint,
-            response: $this->captureResponse($response),
+            response: $captured,
             clock: $this->clock,
             ttlSeconds: $this->ttlSeconds,
         ));
@@ -344,19 +354,46 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         return $headers;
     }
 
-    private function captureResponse(ResponseInterface $response): IdempotencyResponse
+    private function withIntactRequestBody(ServerRequestInterface $request): ServerRequestInterface
+    {
+        $stream = $request->getBody();
+
+        // A seekable body is left alone: the fingerprint drains and rewinds it.
+        if ($stream->isSeekable()) {
+            return $request;
+        }
+
+        return $request->withBody(new BufferedStream((string) $stream));
+    }
+
+    /**
+     * Drains the response body into a replayable snapshot and returns it
+     * together with the message to hand back to the client.
+     *
+     * A non-seekable body cannot be rewound after draining, so the returned
+     * message gets a fresh seekable stream with the content — otherwise the
+     * first caller receives an empty body while every replay gets the full one.
+     *
+     * @return array{IdempotencyResponse, ResponseInterface}
+     */
+    private function captureResponse(ResponseInterface $response): array
     {
         $stream = $response->getBody();
         $body = (string) $stream;
 
         if ($stream->isSeekable()) {
             $stream->rewind();
+        } else {
+            $response = $response->withBody(new BufferedStream($body));
         }
 
-        return new IdempotencyResponse(
-            statusCode: $response->getStatusCode(),
-            headers: $this->captureHeaders($response),
-            body: $body,
-        );
+        return [
+            new IdempotencyResponse(
+                statusCode: $response->getStatusCode(),
+                headers: $this->captureHeaders($response),
+                body: $body,
+            ),
+            $response,
+        ];
     }
 }

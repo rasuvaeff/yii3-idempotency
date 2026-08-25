@@ -13,7 +13,7 @@ use Psr\Http\Message\UriInterface;
  */
 final class FakeRequest implements ServerRequestInterface
 {
-    private ?FakeBodyStream $bodyStream = null;
+    private ?StreamInterface $bodyStream = null;
 
     /**
      * @param array<string, mixed> $serverParams
@@ -50,9 +50,7 @@ final class FakeRequest implements ServerRequestInterface
     public function getBody(): StreamInterface
     {
         return $this->bodyStream ??= new FakeBodyStream($this->body);
-    }
-
-    #[\Override]
+    }    #[\Override]
     public function getHeaders(): array
     {
         return $this->headers;
@@ -215,6 +213,9 @@ final class FakeRequest implements ServerRequestInterface
     #[\Override]
     public function withBody(StreamInterface $body): self
     {
-        return clone $this;
+        $clone = clone $this;
+        $clone->bodyStream = $body;
+
+        return $clone;
     }
 }
