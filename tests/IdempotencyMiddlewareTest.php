@@ -194,7 +194,7 @@ final class IdempotencyMiddlewareTest
 
     public function nonSeekableRequestBodyIsRestoredForTheHandler(): void
     {
-        $request = new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']])
+        $request = (new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']]))
             ->withBody(new FakeBodyStream('{"a":1}', seekable: false));
         $capturing = new class implements RequestHandlerInterface {
             public ServerRequestInterface $received;
@@ -215,9 +215,9 @@ final class IdempotencyMiddlewareTest
 
     public function replayMatchesFingerprintOfANonSeekableRequestBody(): void
     {
-        $first = new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']])
+        $first = (new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']]))
             ->withBody(new FakeBodyStream('{"a":1}', seekable: false));
-        $second = new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']])
+        $second = (new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']]))
             ->withBody(new FakeBodyStream('{"a":1}', seekable: false));
 
         $this->middleware->process($first, new FakeHandler(responseStatus: 201, responseBody: '{"id":7}'));
