@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Non-seekable request bodies are no longer drained for the handler: the
+  middleware restores the content with a fresh seekable stream before taking
+  the fingerprint, and a drained non-seekable response body is restored before
+  the response is returned — previously the first client received an empty
+  body while every replay got the full one (#21).
+- `IdempotencyFingerprint::equals()` compares hashes with `hash_equals()`
+  instead of `===`, closing the theoretical timing channel on fingerprint
+  comparison (#21).
+
 ## 2.0.0 — 2026-08-22
 
 - **BREAKING (security).** `IdempotencyMiddleware::__construct()` takes a new

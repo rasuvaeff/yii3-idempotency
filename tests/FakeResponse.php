@@ -12,7 +12,7 @@ use Psr\Http\Message\StreamInterface;
  */
 final class FakeResponse implements ResponseInterface
 {
-    private FakeStream $stream;
+    private StreamInterface $stream;
     /**
      * Keyed by the casing the caller used, as PSR-7 requires of `getHeaders()`;
      * lookups stay case-insensitive.
@@ -132,6 +132,9 @@ final class FakeResponse implements ResponseInterface
     #[\Override]
     public function withBody(StreamInterface $body): self
     {
-        return clone $this;
+        $clone = clone $this;
+        $clone->stream = $body;
+
+        return $clone;
     }
 }

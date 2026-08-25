@@ -2,27 +2,35 @@
 
 declare(strict_types=1);
 
-namespace Rasuvaeff\Yii3Idempotency\Tests;
+namespace Rasuvaeff\Yii3Idempotency;
 
 use Psr\Http\Message\StreamInterface;
 
 /**
+ * A seekable in-memory copy of a stream body that has already been drained.
+ *
+ * PSR-7 messages are immutable, so a drained non-seekable body cannot be
+ * rewound — the only way to keep the content available to the next consumer
+ * is to put it back with a fresh seekable stream (`withBody()`).
+ *
  * @internal
  */
-final class FakeBodyStream implements StreamInterface
+final class BufferedStream implements StreamInterface
 {
+    private string $contents;
+
     private int $position = 0;
 
-    public function __construct(
-        private readonly string $data = '',
-        private readonly bool $seekable = true,
-    ) {}
+    public function __construct(string $contents)
+    {
+        $this->contents = $contents;
+    }
 
     public function __toString(): string
     {
-        $this->position = strlen($this->data);
+        $this->position = strlen($this->contents);
 
-        return $this->data;
+        return $this->contents;
     }
 
     #[\Override]
@@ -37,7 +45,7 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function getSize(): int
     {
-        return strlen($this->data);
+        return strlen($this->contents);
     }
 
     #[\Override]
@@ -49,19 +57,25 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function eof(): bool
     {
-        return $this->position >= strlen($this->data);
+        return $this->position >= strlen($this->contents);
     }
 
     #[\Override]
     public function isSeekable(): bool
     {
-        return $this->seekable;
+        return true;
     }
 
     #[\Override]
     public function seek(int $offset, int $whence = SEEK_SET): void
     {
-        $this->position = $offset;
+        if ($whence === SEEK_END) {
+            $offset += strlen($this->contents);
+        } elseif ($whence === SEEK_CUR) {
+            $offset += $this->position;
+        }
+
+        $this->position = max(0, $offset);
     }
 
     #[\Override]
@@ -77,9 +91,9 @@ final class FakeBodyStream implements StreamInterface
     }
 
     #[\Override]
-    public function write(string $string): int
+    public function write(string $string): never
     {
-        return 0;
+        throw new \RuntimeException('Cannot write to a buffered body');
     }
 
     #[\Override]
@@ -91,7 +105,7 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function read(int $length): string
     {
-        $chunk = substr($this->data, $this->position, $length);
+        $chunk = substr($this->contents, $this->position, $length);
         $this->position += strlen($chunk);
 
         return $chunk;
@@ -100,14 +114,14 @@ final class FakeBodyStream implements StreamInterface
     #[\Override]
     public function getContents(): string
     {
-        $contents = substr($this->data, $this->position);
-        $this->position = strlen($this->data);
+        $contents = substr($this->contents, $this->position);
+        $this->position = strlen($this->contents);
 
         return $contents;
     }
 
     #[\Override]
-    public function getMetadata(?string $key = null): ?array
+    public function getMetadata(?string $key = null): null
     {
         return null;
     }
