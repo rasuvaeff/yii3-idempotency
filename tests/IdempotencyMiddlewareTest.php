@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
-use Psr\Http\Message\ResponseInterface;
-use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Rasuvaeff\PropertyTesting\ArbitraryInterface;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
+use Rasuvaeff\Understudy\Arg;
+use Rasuvaeff\Understudy\Understudy;
+use Rasuvaeff\Yii3Idempotency\ClaimedFingerprintProvider;
 use Rasuvaeff\Yii3Idempotency\CompositeScopeResolver;
 use Rasuvaeff\Yii3Idempotency\DefaultFailureClassifier;
 use Rasuvaeff\Yii3Idempotency\FailureClassifier;
@@ -20,6 +21,7 @@ use Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
 use Rasuvaeff\Yii3Idempotency\IdempotencyPolicy;
+use Rasuvaeff\Yii3Idempotency\IdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\InMemoryIdempotencyStorage;
 use Rasuvaeff\Yii3Idempotency\MissingKeyException;
 use Rasuvaeff\Yii3Idempotency\PayloadIdempotencyKeyExtractor;
@@ -30,6 +32,8 @@ use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Lifecycle\BeforeTest;
 use Testo\Test;
+
+use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(IdempotencyMiddleware::class)]
@@ -196,42 +200,26 @@ final class IdempotencyMiddlewareTest
     {
         $request = (new FakeRequest(method: 'POST', path: '/api/users', headers: ['idempotency-key' => ['k']]))
             ->withBody(new FakeBodyStream('{"a":1}', seekable: false));
-        $capturing = new class implements RequestHandlerInterface {
-            public ServerRequestInterface $received;
+        $handler = Understudy::for(RequestHandlerInterface::class);
+        when(fn() => $handler->handle(Arg::any()))->returns(new FakeResponse(200));
 
-            #[\Override]
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                $this->received = $request;
+        $this->middleware->process($request, $handler);
 
-                return new FakeResponse(200);
-            }
-        };
-
-        $this->middleware->process($request, $capturing);
-
-        Assert::same((string) $capturing->received->getBody(), '{"a":1}');
+        $received = Understudy::calls(fn() => $handler->handle(Arg::any()))[0]->args[0];
+        Assert::same((string) $received->getBody(), '{"a":1}');
     }
 
     public function seekableRequestBodyIsPassedThroughUntouched(): void
     {
         $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{"a":1}', headers: ['idempotency-key' => ['k']]);
         $sent = $request->getBody();
-        $capturing = new class implements RequestHandlerInterface {
-            public ServerRequestInterface $received;
+        $handler = Understudy::for(RequestHandlerInterface::class);
+        when(fn() => $handler->handle(Arg::any()))->returns(new FakeResponse(200));
 
-            #[\Override]
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                $this->received = $request;
+        $this->middleware->process($request, $handler);
 
-                return new FakeResponse(200);
-            }
-        };
-
-        $this->middleware->process($request, $capturing);
-
-        Assert::same($capturing->received->getBody(), $sent);
+        $received = Understudy::calls(fn() => $handler->handle(Arg::any()))[0]->args[0];
+        Assert::same($received->getBody(), $sent);
     }
 
     public function replayMatchesFingerprintOfANonSeekableRequestBody(): void
@@ -251,13 +239,9 @@ final class IdempotencyMiddlewareTest
     public function nonSeekableResponseStillReachesTheFirstClient(): void
     {
         $request = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
-        $handler = new class implements RequestHandlerInterface {
-            #[\Override]
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return (new FakeResponse(201))->withBody(new FakeBodyStream('{"id":9}', seekable: false));
-            }
-        };
+        $handler = Understudy::for(RequestHandlerInterface::class);
+        when(fn() => $handler->handle(Arg::any()))
+            ->returns((new FakeResponse(201))->withBody(new FakeBodyStream('{"id":9}', seekable: false)));
 
         $response = $this->middleware->process($request, $handler);
 
@@ -269,13 +253,9 @@ final class IdempotencyMiddlewareTest
     {
         $first = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
         $second = new FakeRequest(method: 'POST', path: '/api/users', body: '{}', headers: ['idempotency-key' => ['k']]);
-        $handler = new class implements RequestHandlerInterface {
-            #[\Override]
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return (new FakeResponse(201))->withBody(new FakeBodyStream('{"id":9}', seekable: false));
-            }
-        };
+        $handler = Understudy::for(RequestHandlerInterface::class);
+        when(fn() => $handler->handle(Arg::any()))
+            ->returns((new FakeResponse(201))->withBody(new FakeBodyStream('{"id":9}', seekable: false)));
         $this->middleware->process($first, $handler);
 
         $replayed = $this->middleware->process($second, new FakeHandler(responseStatus: 201));
@@ -556,6 +536,96 @@ final class IdempotencyMiddlewareTest
         Assert::string((string) $response->getBody())->contains('currently being processed');
     }
 
+    public function claimedKeyWithDifferentPayloadReturnsUnprocessableWhileInFlight(): void
+    {
+        $first = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($first),
+        );
+
+        $second = new FakeRequest(
+            method: 'POST',
+            body: '{"a":2}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $handler = new FakeHandler();
+        $response = $this->middleware->process($second, $handler);
+
+        Assert::same($response->getStatusCode(), 422);
+        Assert::same($handler->getCallCount(), 0);
+        Assert::string((string) $response->getBody())->contains('different payload');
+    }
+
+    public function claimedKeyWithDifferentPayloadKeepsConflictWithoutCapability(): void
+    {
+        $first = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($first),
+        );
+
+        // A storage that cannot expose the claim fingerprint keeps the plain
+        // 409 — the capability is deliberately optional. The delegate exposes
+        // only IdempotencyStorage, exactly like a backend without the feature.
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: Understudy::delegate(IdempotencyStorage::class, $this->storage),
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $second = new FakeRequest(
+            method: 'POST',
+            body: '{"a":2}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $response = $middleware->process($second, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::string((string) $response->getBody())->contains('currently being processed');
+    }
+
+    public function claimFailureWithoutClaimedFingerprintKeepsConflict(): void
+    {
+        // claim() refuses, and the capability answers nothing: the loose
+        // defaults (false / null) are exactly a storage that took the claim
+        // elsewhere and cannot tell which payload holds it.
+        $storage = Understudy::for(IdempotencyStorage::class, ClaimedFingerprintProvider::class);
+        when(fn() => $storage->claim(Arg::any(), Arg::any()))->returns(false);
+
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $response = $middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+    }
+
     public function serverErrorResponseIsNotStored(): void
     {
         $request = new FakeRequest(
@@ -582,21 +652,13 @@ final class IdempotencyMiddlewareTest
             body: '{"name":"John"}',
             headers: ['idempotency-key' => ['key-1']],
         );
-        $seenBody = '';
-        $handler = new class ($seenBody) implements \Psr\Http\Server\RequestHandlerInterface {
-            public function __construct(private string &$seenBody) {}
-
-            #[\Override]
-            public function handle(\Psr\Http\Message\ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
-            {
-                $this->seenBody = $request->getBody()->getContents();
-
-                return new FakeResponse(200);
-            }
-        };
+        $handler = Understudy::for(RequestHandlerInterface::class);
+        when(fn() => $handler->handle(Arg::any()))->returns(new FakeResponse(200));
 
         $this->middleware->process($request, $handler);
 
+        $seenBody = Understudy::calls(fn() => $handler->handle(Arg::any()))[0]->args[0]
+            ->getBody()->getContents();
         Assert::same($seenBody, '{"name":"John"}');
     }
 
@@ -651,18 +713,14 @@ final class IdempotencyMiddlewareTest
             method: 'POST',
             headers: ['idempotency-key' => ['key-1']],
         );
-        $handler = new class implements \Psr\Http\Server\RequestHandlerInterface {
-            #[\Override]
-            public function handle(
-                \Psr\Http\Message\ServerRequestInterface $request,
-            ): \Psr\Http\Message\ResponseInterface {
-                $response = new FakeResponse(201);
-                $response = $response->withHeader(name: 'Content-Type', value: 'application/json');
-                $response = $response->withHeader(name: 'Location', value: '/orders/1');
-
-                return $response->withHeader(name: 'X-Trace', value: 'abc');
-            }
-        };
+        $handler = Understudy::for(RequestHandlerInterface::class);
+        when(fn() => $handler->handle(Arg::any()))
+            ->returns(
+                (new FakeResponse(201))
+                    ->withHeader(name: 'Content-Type', value: 'application/json')
+                    ->withHeader(name: 'Location', value: '/orders/1')
+                    ->withHeader(name: 'X-Trace', value: 'abc'),
+            );
 
         $this->middleware->process($request, $handler);
         $replay = $this->middleware->process($request, new FakeHandler());
@@ -827,7 +885,8 @@ final class IdempotencyMiddlewareTest
 
     public function storageFailureWhileCachingADomainFailureReleasesTheClaim(): void
     {
-        $storage = new FailingIdempotencyStorage(new InMemoryIdempotencyStorage($this->clock));
+        $storage = Understudy::delegate(IdempotencyStorage::class, new InMemoryIdempotencyStorage($this->clock));
+        when(fn() => $storage->store(Arg::any()))->throws(new \RuntimeException('storage is down'));
         $middleware = new IdempotencyMiddleware(
             keyExtractor: $this->extractor,
             storage: $storage,
@@ -850,7 +909,8 @@ final class IdempotencyMiddlewareTest
 
     public function storageFailureOnASuccessfulResponseReleasesTheClaim(): void
     {
-        $storage = new FailingIdempotencyStorage(new InMemoryIdempotencyStorage($this->clock));
+        $storage = Understudy::delegate(IdempotencyStorage::class, new InMemoryIdempotencyStorage($this->clock));
+        when(fn() => $storage->store(Arg::any()))->throws(new \RuntimeException('storage is down'));
         $middleware = new IdempotencyMiddleware(
             keyExtractor: $this->extractor,
             storage: $storage,
@@ -871,13 +931,11 @@ final class IdempotencyMiddlewareTest
 
     public function failingReleaseDoesNotReplaceTheHandlerFailure(): void
     {
+        $storage = Understudy::delegate(IdempotencyStorage::class, new InMemoryIdempotencyStorage($this->clock));
+        when(fn() => $storage->release(Arg::any()))->throws(new \RuntimeException('release is down'));
         $middleware = new IdempotencyMiddleware(
             keyExtractor: $this->extractor,
-            storage: new FailingIdempotencyStorage(
-                inner: new InMemoryIdempotencyStorage($this->clock),
-                failOnStore: false,
-                failOnRelease: true,
-            ),
+            storage: $storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
             scopeResolver: new SharedKeyspaceScopeResolver(),
@@ -898,12 +956,12 @@ final class IdempotencyMiddlewareTest
 
     public function failingReleaseDoesNotReplaceTheStorageFailure(): void
     {
+        $storage = Understudy::delegate(IdempotencyStorage::class, new InMemoryIdempotencyStorage($this->clock));
+        when(fn() => $storage->store(Arg::any()))->throws(new \RuntimeException('storage is down'));
+        when(fn() => $storage->release(Arg::any()))->throws(new \RuntimeException('release is down'));
         $middleware = new IdempotencyMiddleware(
             keyExtractor: $this->extractor,
-            storage: new FailingIdempotencyStorage(
-                inner: new InMemoryIdempotencyStorage($this->clock),
-                failOnRelease: true,
-            ),
+            storage: $storage,
             responseFactory: new FakeResponseFactory(),
             clock: $this->clock,
             scopeResolver: new SharedKeyspaceScopeResolver(),

@@ -10,7 +10,7 @@ payload, same key), and TTL-based expiration.
 
 Namespace: `Rasuvaeff\Yii3Idempotency`.
 Public API: `IdempotencyMiddleware`, `IdempotencyKey`, `IdempotencyFingerprint`, `IdempotencyRecord`,
-`IdempotencyResponse`, `IdempotencyStorage`, `InMemoryIdempotencyStorage`,
+`IdempotencyResponse`, `IdempotencyStorage`, `ClaimedFingerprintProvider`, `InMemoryIdempotencyStorage`,
 `HeaderIdempotencyKeyExtractor`, `PayloadIdempotencyKeyExtractor`,
 `ScopedIdempotencyKeyExtractor`, `IdempotencyScope`, `IdempotencyScopeResolver`,
 `RequestTargetScopeResolver`, `RequestAttributeScopeResolver`,
@@ -75,6 +75,12 @@ make release-check
   so the first client gets the full body, not just every replay.
   Fingerprint comparison goes through `hash_equals()` — never `===`.
 - Conflict semantics: 422 for payload mismatch, 409 for an in-flight duplicate.
+  A failed `claim()` is a duplicate — unless the storage implements
+  `ClaimedFingerprintProvider` and its in-flight fingerprint differs from the
+  request's, which is a mismatch (422, not a retryable 409). The capability is
+  optional; storages without it keep the plain 409. `store()` finishes the
+  in-memory claim and a stored record blocks a fresh `claim()` — the same way
+  the unique primary key does in a persistent adapter.
 - Only 2xx handler responses are cached; any non-2xx (3xx/4xx — incl. retryable
   409/423/429 — and 5xx) releases the claim instead, so transient failures stay
   retryable under the same key.

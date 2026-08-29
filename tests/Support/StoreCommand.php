@@ -8,7 +8,9 @@ use Rasuvaeff\PropertyTesting\StateMachine\Command;
 
 /**
  * Model-based command: store a record for the key at $index, so it loads
- * afterwards. The model is `['claimed' => bool[], 'stored' => bool[]]`.
+ * afterwards. Storing finishes the claim, exactly as the write that flips
+ * `claimed = 0` in a persistent adapter. The model is
+ * `['claimed' => bool[], 'stored' => bool[]]`.
  */
 final readonly class StoreCommand implements Command
 {
@@ -23,9 +25,10 @@ final readonly class StoreCommand implements Command
     #[\Override]
     public function nextState(mixed $model): mixed
     {
-        \assert(is_array($model) && is_array($model['stored']));
+        \assert(is_array($model) && is_array($model['claimed']) && is_array($model['stored']));
 
         $model['stored'][$this->index] = true;
+        $model['claimed'][$this->index] = false;
 
         return $model;
     }
@@ -37,7 +40,10 @@ final readonly class StoreCommand implements Command
 
         $system->store($this->index);
 
-        return ['loaded' => $system->loadedSnapshot(count($model['stored']))];
+        return [
+            'loaded' => $system->loadedSnapshot(count($model['stored'])),
+            'claimed' => $system->claimedSnapshot(count($model['stored'])),
+        ];
     }
 
     #[\Override]
@@ -45,7 +51,13 @@ final readonly class StoreCommand implements Command
     {
         \assert(is_array($result));
 
-        return $result['loaded'] === $this->nextState($model)['stored'];
+        $next = $this->nextState($model);
+
+        return $result['loaded'] === $next['stored']
+            && $result['claimed'] === array_map(
+                static fn(bool $claimed): ?string => $claimed ? 'fingerprint' : null,
+                $next['claimed'],
+            );
     }
 
     #[\Override]

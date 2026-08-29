@@ -9,12 +9,12 @@ use Psr\Clock\ClockInterface;
 /**
  * @api
  */
-final class InMemoryIdempotencyStorage implements IdempotencyStorage
+final class InMemoryIdempotencyStorage implements IdempotencyStorage, ClaimedFingerprintProvider
 {
     /** @var array<string, IdempotencyRecord> */
     private array $records = [];
 
-    /** @var array<string, true> */
+    /** @var array<string, IdempotencyFingerprint> */
     private array $claims = [];
 
     public function __construct(
@@ -42,11 +42,14 @@ final class InMemoryIdempotencyStorage implements IdempotencyStorage
     #[\Override]
     public function claim(IdempotencyKey $key, IdempotencyFingerprint $fingerprint): bool
     {
-        if (isset($this->claims[$key->value])) {
+        // A stored record blocks the claim the same way the unique primary key
+        // does in a persistent adapter: the key is spent until it expires and
+        // `load()` cleans it up.
+        if (isset($this->claims[$key->value]) || isset($this->records[$key->value])) {
             return false;
         }
 
-        $this->claims[$key->value] = true;
+        $this->claims[$key->value] = $fingerprint;
 
         return true;
     }
@@ -55,6 +58,13 @@ final class InMemoryIdempotencyStorage implements IdempotencyStorage
     public function store(IdempotencyRecord $record): void
     {
         $this->records[$record->key->value] = $record;
+        unset($this->claims[$record->key->value]);
+    }
+
+    #[\Override]
+    public function claimedFingerprint(IdempotencyKey $key): ?IdempotencyFingerprint
+    {
+        return $this->claims[$key->value] ?? null;
     }
 
     #[\Override]

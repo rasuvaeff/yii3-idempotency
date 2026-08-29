@@ -10,6 +10,7 @@ use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
 use Rasuvaeff\PropertyTesting\StateMachine\CommandSequence;
 use Rasuvaeff\PropertyTesting\StateMachine\StateMachine;
+use Rasuvaeff\Yii3Idempotency\ClaimedFingerprintProvider;
 use Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint;
 use Rasuvaeff\Yii3Idempotency\IdempotencyKey;
 use Rasuvaeff\Yii3Idempotency\IdempotencyRecord;
@@ -43,6 +44,11 @@ final class InMemoryIdempotencyStorageTest
     public function implementsInterface(): void
     {
         Assert::instanceOf($this->storage, IdempotencyStorage::class);
+    }
+
+    public function implementsClaimedFingerprintProvider(): void
+    {
+        Assert::instanceOf($this->storage, ClaimedFingerprintProvider::class);
     }
 
     public function loadReturnsNullForUnknownKey(): void
@@ -111,6 +117,53 @@ final class InMemoryIdempotencyStorageTest
         $this->storage->release($key);
 
         Assert::true($this->storage->claim($key, $fp));
+    }
+
+    public function claimedFingerprintReturnsClaimFingerprint(): void
+    {
+        $key = new IdempotencyKey('key-1');
+        $fp = $this->createFingerprint('hash-1');
+
+        $this->storage->claim($key, $fp);
+
+        $claimed = $this->storage->claimedFingerprint($key);
+
+        Assert::notNull($claimed);
+        Assert::true($claimed->equals($fp));
+    }
+
+    public function claimedFingerprintIsNullForUnknownKey(): void
+    {
+        Assert::null($this->storage->claimedFingerprint(new IdempotencyKey('unknown')));
+    }
+
+    public function claimedFingerprintIsNullAfterRelease(): void
+    {
+        $key = new IdempotencyKey('key-1');
+
+        $this->storage->claim($key, $this->createFingerprint('hash-1'));
+        $this->storage->release($key);
+
+        Assert::null($this->storage->claimedFingerprint($key));
+    }
+
+    public function claimedFingerprintIsNullAfterStore(): void
+    {
+        $key = new IdempotencyKey('key-1');
+
+        $this->storage->claim($key, $this->createFingerprint('hash-1'));
+        $this->storage->store($this->createRecord($key));
+
+        Assert::null($this->storage->claimedFingerprint($key));
+    }
+
+    public function claimReturnsFalseForStoredRecord(): void
+    {
+        $key = new IdempotencyKey('key-1');
+
+        $this->storage->store($this->createRecord($key));
+
+        Assert::false($this->storage->claim($key, $this->createFingerprint('hash-1')));
     }
 
     private function createFingerprint(string $hash): IdempotencyFingerprint
