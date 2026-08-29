@@ -38,7 +38,10 @@ final readonly class ReleaseCommand implements Command
 
         $system->release($this->index);
 
-        return ['loaded' => $system->loadedSnapshot(count($model['stored']))];
+        return [
+            'loaded' => $system->loadedSnapshot(count($model['stored'])),
+            'claimed' => $system->claimedSnapshot(count($model['stored'])),
+        ];
     }
 
     #[\Override]
@@ -46,8 +49,14 @@ final readonly class ReleaseCommand implements Command
     {
         \assert(is_array($result));
 
+        $next = $this->nextState($model);
+
         // release() clears the claim but leaves the stored record intact.
-        return $result['loaded'] === $this->nextState($model)['stored'];
+        return $result['loaded'] === $next['stored']
+            && $result['claimed'] === array_map(
+                static fn(bool $claimed): ?string => $claimed ? 'fingerprint' : null,
+                $next['claimed'],
+            );
     }
 
     #[\Override]

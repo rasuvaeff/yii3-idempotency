@@ -7,8 +7,10 @@ namespace Rasuvaeff\Yii3Idempotency\Tests\Support;
 use Rasuvaeff\PropertyTesting\StateMachine\Command;
 
 /**
- * Model-based command: claim the key at $index. Succeeds iff the key is not
- * already claimed. The model is `['claimed' => bool[], 'stored' => bool[]]`.
+ * Model-based command: claim the key at $index. Succeeds iff the key is neither
+ * already claimed nor holding a stored record — the unique primary key of a
+ * persistent adapter blocks both. The model is
+ * `['claimed' => bool[], 'stored' => bool[]]`.
  */
 final readonly class ClaimCommand implements Command
 {
@@ -23,9 +25,14 @@ final readonly class ClaimCommand implements Command
     #[\Override]
     public function nextState(mixed $model): mixed
     {
-        \assert(is_array($model) && is_array($model['claimed']));
+        \assert(is_array($model) && is_array($model['claimed']) && is_array($model['stored']));
 
-        $model['claimed'][$this->index] = true;
+        // The outcome is deterministic in the model: a claim that cannot be
+        // granted (already claimed, or a stored record blocks the key) leaves
+        // the claim flags untouched.
+        if ($model['claimed'][$this->index] === false && $model['stored'][$this->index] === false) {
+            $model['claimed'][$this->index] = true;
+        }
 
         return $model;
     }
@@ -38,18 +45,25 @@ final readonly class ClaimCommand implements Command
         return [
             'granted' => $system->claim($this->index),
             'loaded' => $system->loadedSnapshot(count($model['stored'])),
+            'claimed' => $system->claimedSnapshot(count($model['stored'])),
         ];
     }
 
     #[\Override]
     public function postCondition(mixed $model, mixed $result): bool
     {
-        \assert(is_array($model) && is_array($model['claimed']) && is_array($result));
+        \assert(is_array($model) && is_array($model['claimed']) && is_array($model['stored']) && is_array($result));
 
-        $expectedGranted = $model['claimed'][$this->index] === false;
+        $next = $this->nextState($model);
+        $expectedGranted = $model['claimed'][$this->index] === false
+            && $model['stored'][$this->index] === false;
 
         return $result['granted'] === $expectedGranted
-            && $result['loaded'] === $this->nextState($model)['stored'];
+            && $result['loaded'] === $next['stored']
+            && $result['claimed'] === array_map(
+                static fn(bool $claimed): ?string => $claimed ? 'fingerprint' : null,
+                $next['claimed'],
+            );
     }
 
     #[\Override]

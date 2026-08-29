@@ -57,7 +57,8 @@ $middleware = new IdempotencyMiddleware(
 | Первый запрос с ключом | Обработчик выполняется, ответ сохраняется |
 | Тот же ключ + тот же payload | Воспроизводится сохранённый ответ (обработчик не вызывается) |
 | Тот же ключ + другой payload | 422 Unprocessable Content |
-| Тот же ключ во время обработки первого запроса | 409 Conflict |
+| Тот же ключ + тот же payload во время обработки первого запроса | 409 Conflict |
+| Тот же ключ + другой payload во время обработки первого запроса | 422 Unprocessable Content, если storage реализует `ClaimedFingerprintProvider`, иначе 409 Conflict |
 | Некорректный ключ (слишком длинный, недопустимые символы) | 400 Bad Request |
 | Тот же ключ + тот же payload, но другой клиент | Обработчик выполняется снова — два клиента никогда не делят одну запись |
 | Ответ обработчика не 2xx (3xx/4xx/5xx) | Ответ НЕ сохраняется — захват освобождается, клиент может повторить запрос с тем же ключом |
@@ -248,6 +249,7 @@ return [
 | `IdempotencyRecord` | Сохраняемая запись с TTL |
 | `IdempotencyResponse` | Захваченный ответ (status, headers, body) |
 | `IdempotencyStorage` | Интерфейс: load, claim, store, release |
+| `ClaimedFingerprintProvider` | Опциональная capability storage: fingerprint захваченного claim — позволяет middleware ответить 422 вместо повторяемого 409, когда ключ переиспользован с другим payload во время обработки |
 | `IdempotencyKeyExtractor` | Интерфейс стратегий извлечения ключа |
 | `InMemoryIdempotencyStorage` | In-memory реализация (для тестов) |
 | `HeaderIdempotencyKeyExtractor` | Извлекает ключ из заголовка запроса |

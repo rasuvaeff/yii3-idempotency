@@ -17,14 +17,9 @@ use Psr\Http\Message\StreamInterface;
  */
 final class BufferedStream implements StreamInterface
 {
-    private string $contents;
-
     private int $position = 0;
 
-    public function __construct(string $contents)
-    {
-        $this->contents = $contents;
-    }
+    public function __construct(private readonly string $contents) {}
 
     public function __toString(): string
     {

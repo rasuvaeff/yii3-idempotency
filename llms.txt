@@ -13,7 +13,7 @@ composer require rasuvaeff/yii3-idempotency
 - Fingerprint: `sha256(method + "\n" + path + "\n" + query + "\n" + body)`
 - Replay: same key + same fingerprint => cached response, handler NOT called
 - Payload mismatch: same key + different fingerprint => 422
-- In-flight duplicate: claim already taken => 409
+- In-flight duplicate: claim already taken => 409; if the storage implements `ClaimedFingerprintProvider` and the in-flight claim's fingerprint differs => 422
 - Only 2xx handler responses are cached; non-2xx (3xx/4xx incl. retryable 409/423/429, and any 5xx) release the claim and stay retryable
 - Thrown failures: cached ONLY when a `DomainFailureRenderer` is configured AND the `FailureClassifier` returns `FailureKind::Domain`; otherwise the claim is released and the throwable is rethrown
 - Returning a 4xx response and throwing a domain exception are different paths — only the throwing path is classified
@@ -75,6 +75,18 @@ interface IdempotencyStorage {
     public function claim(IdempotencyKey $key, IdempotencyFingerprint $fp): bool;
     public function store(IdempotencyRecord $record): void;
     public function release(IdempotencyKey $key): void;
+}
+```
+
+### ClaimedFingerprintProvider (interface)
+
+Optional capability a storage may implement alongside `IdempotencyStorage`.
+After a failed `claim()` the middleware asks it for the in-flight fingerprint:
+a mismatch answers 422 instead of a retryable 409.
+
+```php
+interface ClaimedFingerprintProvider {
+    public function claimedFingerprint(IdempotencyKey $key): ?IdempotencyFingerprint;
 }
 ```
 

@@ -148,7 +148,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         }
 
         if (!$this->storage->claim($key, $fingerprint)) {
-            return $this->inProgressResponse();
+            return $this->claimConflictResponse($key, $fingerprint);
         }
 
         // Only what the handler itself throws is a candidate for classification;
@@ -282,6 +282,28 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         ));
 
         return $response;
+    }
+
+    /**
+     * A failed claim means the key is taken: an in-flight duplicate, or a
+     * record that landed between our `load()` and `claim()`.
+     *
+     * When the storage can tell which payload holds the claim, a key reused
+     * with a different payload is a mismatch (422), not a retryable "being
+     * processed" (409) — the caller would otherwise keep retrying a request
+     * that can never succeed. A storage without the capability keeps the 409.
+     */
+    private function claimConflictResponse(IdempotencyKey $key, IdempotencyFingerprint $fingerprint): ResponseInterface
+    {
+        if ($this->storage instanceof ClaimedFingerprintProvider) {
+            $claimed = $this->storage->claimedFingerprint($key);
+
+            if ($claimed instanceof \Rasuvaeff\Yii3Idempotency\IdempotencyFingerprint && !$claimed->equals($fingerprint)) {
+                return $this->payloadMismatchResponse();
+            }
+        }
+
+        return $this->inProgressResponse();
     }
 
     private function payloadMismatchResponse(): ResponseInterface

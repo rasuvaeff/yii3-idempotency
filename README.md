@@ -57,7 +57,8 @@ $middleware = new IdempotencyMiddleware(
 | First request with key | Handler processes, response stored |
 | Same key + same payload | Stored response replayed (handler not called) |
 | Same key + different payload | 422 Unprocessable Content |
-| Same key while first request is still processing | 409 Conflict |
+| Same key + same payload while first request is still processing | 409 Conflict |
+| Same key + different payload while first request is still processing | 422 Unprocessable Content when the storage implements `ClaimedFingerprintProvider`, otherwise 409 Conflict |
 | Malformed key (too long, illegal characters) | 400 Bad Request |
 | Same key + same payload, different caller | Handler processes again — the two callers never share a record |
 | Non-2xx handler response (3xx/4xx/5xx) | Response NOT stored — claim released, client may retry with the same key |
@@ -245,6 +246,7 @@ caching on. `FailureClassifier` needs wiring only to override
 | `IdempotencyRecord` | Stored record with TTL |
 | `IdempotencyResponse` | Captured response (status, headers, body) |
 | `IdempotencyStorage` | Interface: load, claim, store, release |
+| `ClaimedFingerprintProvider` | Optional storage capability: the fingerprint of an in-flight claim — lets the middleware answer 422 instead of a retryable 409 when a key is reused with a different payload mid-flight |
 | `IdempotencyKeyExtractor` | Interface for key extraction strategies |
 | `InMemoryIdempotencyStorage` | In-memory implementation (for testing) |
 | `HeaderIdempotencyKeyExtractor` | Extracts key from request header |

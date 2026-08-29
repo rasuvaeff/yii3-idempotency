@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0 — 2026-08-29
+
+- New optional `ClaimedFingerprintProvider` capability for
+  `IdempotencyStorage` implementations. After a failed `claim()` the middleware
+  asks a capable storage for the fingerprint of the in-flight claim, so a key
+  reused with a *different* payload while the original request is still being
+  processed now gets 422 instead of a retryable 409 — the caller would
+  otherwise keep retrying a request that can never succeed. Storages without
+  the capability keep the plain 409. `InMemoryIdempotencyStorage` implements
+  it; a `store()` now finishes the in-memory claim and a stored record blocks a
+  fresh `claim()`, matching the unique primary key of persistent adapters (#21).
+
 ## 2.0.1 — 2026-08-25
 
 - Non-seekable request bodies are no longer drained for the handler: the

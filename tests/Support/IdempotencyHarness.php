@@ -69,6 +69,11 @@ final readonly class IdempotencyHarness
         return $this->storage->load($this->keys[$index]) instanceof IdempotencyRecord;
     }
 
+    public function claimedFingerprint(int $index): ?string
+    {
+        return $this->storage->claimedFingerprint($this->keys[$index])?->hash;
+    }
+
     /**
      * Whether each of the first $count keys currently loads a record — mirrors
      * the model's "stored" flags. Pure: the fixed clock never expires anything.
@@ -78,5 +83,16 @@ final readonly class IdempotencyHarness
     public function loadedSnapshot(int $count): array
     {
         return array_map($this->loaded(...), range(0, $count - 1));
+    }
+
+    /**
+     * The in-flight claim fingerprint per key — mirrors the model's "claimed"
+     * flags as the single fingerprint value or null.
+     *
+     * @return list<?string>
+     */
+    public function claimedSnapshot(int $count): array
+    {
+        return array_map($this->claimedFingerprint(...), range(0, $count - 1));
     }
 }
