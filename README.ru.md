@@ -57,7 +57,7 @@ $middleware = new IdempotencyMiddleware(
 | Первый запрос с ключом | Обработчик выполняется, ответ сохраняется. Заголовок: `Idempotency-Replay: false` |
 | Тот же ключ + тот же payload | Воспроизводится сохранённый ответ (обработчик не вызывается). Заголовок: `Idempotency-Replay: true` |
 | Тот же ключ + другой payload | 422 Unprocessable Content |
-| Тот же ключ + тот же payload во время обработки первого запроса | 409 Conflict |
+| Тот же ключ + тот же payload во время обработки первого запроса | 409 Conflict, с заголовком `Retry-After`, если сторедж реализует `ClaimedDeadlineProvider` |
 | Тот же ключ + другой payload во время обработки первого запроса | 422 Unprocessable Content, если storage реализует `ClaimedFingerprintProvider`, иначе 409 Conflict |
 | Некорректный ключ (слишком длинный, недопустимые символы) | 400 Bad Request |
 | Тот же ключ + тот же payload, но другой клиент | Обработчик выполняется снова — два клиента никогда не делят одну запись |
@@ -250,6 +250,7 @@ return [
 | `IdempotencyResponse` | Захваченный ответ (status, headers, body) |
 | `IdempotencyStorage` | Интерфейс: load, claim, store, release |
 | `ClaimedFingerprintProvider` | Опциональная capability storage: fingerprint захваченного claim — позволяет middleware ответить 422 вместо повторяемого 409, когда ключ переиспользован с другим payload во время обработки |
+| `ClaimedDeadlineProvider` | Опциональная capability storage: deadline захваченного claim — позволяет middleware добавить `Retry-After` (оставшиеся секунды) к in-flight 409. Реализовано в `DbIdempotencyStorage` из `rasuvaeff/yii3-idempotency-db` |
 | `IdempotencyKeyExtractor` | Интерфейс стратегий извлечения ключа |
 | `InMemoryIdempotencyStorage` | In-memory реализация (для тестов) |
 | `HeaderIdempotencyKeyExtractor` | Извлекает ключ из заголовка запроса |

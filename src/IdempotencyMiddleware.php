@@ -307,6 +307,11 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
      * with a different payload is a mismatch (422), not a retryable "being
      * processed" (409) — the caller would otherwise keep retrying a request
      * that can never succeed. A storage without the capability keeps the 409.
+     *
+     * A storage that can also name the claim's deadline adds `Retry-After`
+     * with the remaining seconds: the moment a competitor may take the key
+     * over, which is the earliest a retry can turn into anything other than
+     * this same 409.
      */
     private function claimConflictResponse(IdempotencyKey $key, IdempotencyFingerprint $fingerprint): ResponseInterface
     {
@@ -318,7 +323,31 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             }
         }
 
-        return $this->inProgressResponse();
+        return $this->inProgressResponse(retryAfterSeconds: $this->remainingClaimSeconds($key));
+    }
+
+    /**
+     * Seconds until the in-flight claim's deadline, when the storage can name
+     * it and it is still in the future. A deadline already passed (the
+     * takeover window) and a storage without the capability both answer null:
+     * the first would advise a retry that is already due, the second has
+     * nothing to advise.
+     */
+    private function remainingClaimSeconds(IdempotencyKey $key): ?int
+    {
+        if (!$this->storage instanceof ClaimedDeadlineProvider) {
+            return null;
+        }
+
+        $deadline = $this->storage->claimedDeadline($key);
+
+        if (!$deadline instanceof \DateTimeImmutable) {
+            return null;
+        }
+
+        $remaining = $deadline->getTimestamp() - $this->clock->now()->getTimestamp();
+
+        return $remaining > 0 ? $remaining : null;
     }
 
     private function payloadMismatchResponse(): ResponseInterface
@@ -337,12 +366,18 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         );
     }
 
-    private function inProgressResponse(): ResponseInterface
+    private function inProgressResponse(?int $retryAfterSeconds = null): ResponseInterface
     {
-        return $this->jsonErrorResponse(
+        $response = $this->jsonErrorResponse(
             statusCode: 409,
             body: '{"error":"Conflict","message":"Request with this idempotency key is currently being processed"}',
         );
+
+        if ($retryAfterSeconds !== null) {
+            $response = $response->withHeader(name: 'Retry-After', value: (string) $retryAfterSeconds);
+        }
+
+        return $response;
     }
 
     private function jsonErrorResponse(int $statusCode, string $body): ResponseInterface
