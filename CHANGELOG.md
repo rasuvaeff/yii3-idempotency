@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 — 2026-10-26
 
 - New optional `ClaimedDeadlineProvider` capability for `IdempotencyStorage`
   implementations: the deadline of a claim currently in flight. When a failed
