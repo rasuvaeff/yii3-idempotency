@@ -576,6 +576,121 @@ final class IdempotencyMiddlewareTest
         Assert::string((string) $response->getBody())->contains('currently being processed');
     }
 
+    public function claimConflictCarriesRetryAfterFromTheDeadlineCapability(): void
+    {
+        $storage = new FakeDeadlineStorage($this->storage);
+        $storage->deadline = $this->clock->now()->modify('+120 seconds');
+
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $response = $middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($response->getHeaderLine('Retry-After'), '120');
+    }
+
+    public function claimConflictOmitsRetryAfterWhenTheDeadlineHasPassed(): void
+    {
+        $storage = new FakeDeadlineStorage($this->storage);
+        $storage->deadline = $this->clock->now()->modify('-5 seconds');
+
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $response = $middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($response->hasHeader('Retry-After'), false);
+    }
+
+    public function claimConflictWithoutTheDeadlineCapabilityKeepsTheBareConflict(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $response = $this->middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($response->hasHeader('Retry-After'), false);
+    }
+
+    public function payloadMismatchConflictCarriesNoRetryAfter(): void
+    {
+        $storage = new FakeDeadlineStorage($this->storage);
+        $storage->deadline = $this->clock->now()->modify('+120 seconds');
+
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $first = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($first),
+        );
+
+        $second = new FakeRequest(
+            method: 'POST',
+            body: '{"a":2}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $response = $middleware->process($second, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 422);
+        Assert::same($response->hasHeader('Retry-After'), false);
+    }
+
     public function claimedKeyWithDifferentPayloadReturnsUnprocessableWhileInFlight(): void
     {
         $first = new FakeRequest(

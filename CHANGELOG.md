@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New optional `ClaimedDeadlineProvider` capability for `IdempotencyStorage`
+  implementations: the deadline of a claim currently in flight. When a failed
+  `claim()` turns into the in-flight 409, the middleware now adds a
+  `Retry-After` header with the remaining seconds — the moment a competitor
+  may take the key over, the earliest a retry can turn into anything other
+  than the same 409. A deadline already passed and a storage without the
+  capability both keep the plain 409. The payload-mismatch 422 never carries
+  the header. A backend implementation ships in
+  `rasuvaeff/yii3-idempotency-db`.
 - `Idempotency-Replay` response header. Every stored response (2xx or a
   rendered domain failure) is captured with `Idempotency-Replay: false`; a
   replay restores the snapshot and overrides the value to `true`, so a client
