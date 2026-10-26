@@ -54,8 +54,8 @@ $middleware = new IdempotencyMiddleware(
 |---|---|
 | No idempotency key, `PassThrough` policy | Request passes through |
 | No idempotency key, `Reject` policy | 400 Bad Request |
-| First request with key | Handler processes, response stored |
-| Same key + same payload | Stored response replayed (handler not called) |
+| First request with key | Handler processes, response stored. Header: `Idempotency-Replay: false` |
+| Same key + same payload | Stored response replayed (handler not called). Header: `Idempotency-Replay: true` |
 | Same key + different payload | 422 Unprocessable Content |
 | Same key + same payload while first request is still processing | 409 Conflict |
 | Same key + different payload while first request is still processing | 422 Unprocessable Content when the storage implements `ClaimedFingerprintProvider`, otherwise 409 Conflict |

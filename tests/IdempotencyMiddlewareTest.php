@@ -471,6 +471,46 @@ final class IdempotencyMiddlewareTest
         Assert::same($handler->getCallCount(), 1);
     }
 
+    public function firstResponseCarriesReplayHeaderFalse(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $response = $this->middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getHeaderLine('Idempotency-Replay'), 'false');
+    }
+
+    public function replayResponseCarriesReplayHeaderTrue(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+        $handler = new FakeHandler();
+
+        $this->middleware->process($request, $handler);
+
+        $response = $this->middleware->process($request, $handler);
+
+        Assert::same($response->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::same($handler->getCallCount(), 1);
+    }
+
+    public function nonSuccessResponseCarriesNoReplayHeader(): void
+    {
+        $request = new FakeRequest(
+            method: 'POST',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $response = $this->middleware->process($request, new FakeHandler(responseStatus: 503));
+
+        Assert::same($response->hasHeader('Idempotency-Replay'), false);
+    }
+
     public function notExpiredJustBeforeTtl(): void
     {
         $middleware = new IdempotencyMiddleware(
@@ -765,6 +805,19 @@ final class IdempotencyMiddlewareTest
         Assert::same($replay->getHeader('Content-Type'), ['application/json']);
         Assert::same($handler->getCallCount(), 1);
         Assert::same($renderer->getCallCount(), 1);
+    }
+
+    public function renderedDomainFailureCarriesTheReplayHeader(): void
+    {
+        $middleware = $this->middlewareWith(renderer: new FakeDomainFailureRenderer());
+        $request = $this->keyedRequest();
+        $handler = new FakeHandler(throwable: new FakeDomainException('payment declined'));
+
+        $first = $middleware->process($request, $handler);
+        $replay = $middleware->process($request, $handler);
+
+        Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false');
+        Assert::same($replay->getHeaderLine('Idempotency-Replay'), 'true');
     }
 
     public function retryableFailureIsNotCached(): void

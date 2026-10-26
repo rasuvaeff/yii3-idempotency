@@ -23,6 +23,14 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
     private const int SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
 
     /**
+     * Marks whether an answer came from the cache. Every stored response is
+     * captured with the header set to `false`; a replay restores the snapshot
+     * and overrides the value to `true` — so a client can tell whether the
+     * handler actually ran without guessing from timing.
+     */
+    private const string REPLAY_HEADER = 'Idempotency-Replay';
+
+    /**
      * Headers that describe the original response or connection and must never
      * be persisted and handed back on a replay. `Set-Cookie` above all: a
      * session identifier does not belong in a storage row for the whole TTL,
@@ -175,6 +183,11 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             return $response;
         }
 
+        // The header is part of the snapshot: the first caller and every
+        // replay get it from the same source of truth, and the replay only
+        // flips the value (see replayResponse()).
+        $response = $response->withHeader(name: self::REPLAY_HEADER, value: 'false');
+
         try {
             [$captured, $response] = $this->captureResponse($response);
 
@@ -271,6 +284,8 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             return null;
         }
 
+        $response = $response->withHeader(name: self::REPLAY_HEADER, value: 'false');
+
         [$captured, $response] = $this->captureResponse($response);
 
         $this->storage->store(IdempotencyRecord::create(
@@ -347,6 +362,10 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         foreach ($captured->headers as $name => $values) {
             $response = $response->withHeader(name: $name, value: $values);
         }
+
+        // `withHeader` replaces, so a snapshot captured with `false` (or a
+        // handler that set the header itself) cannot leak into a replay.
+        $response = $response->withHeader(name: self::REPLAY_HEADER, value: 'true');
 
         $response->getBody()->write($captured->body);
         $response->getBody()->rewind();
