@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `Idempotency-Replay` response header. Every stored response (2xx or a
+  rendered domain failure) is captured with `Idempotency-Replay: false`; a
+  replay restores the snapshot and overrides the value to `true`, so a client
+  can tell a cached answer from a first execution without guessing from
+  timing. Non-2xx responses — released, never cached — carry no header.
+
 ## 2.1.0 — 2026-08-29
 
 - New optional `ClaimedFingerprintProvider` capability for
