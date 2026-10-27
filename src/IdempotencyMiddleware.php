@@ -22,6 +22,10 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
 
     private const int SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
 
+    private const int REDIRECT_STATUS_MIN = 300;
+
+    private const int REDIRECT_STATUS_MAX_EXCLUSIVE = 400;
+
     /**
      * Marks whether an answer came from the cache. Every stored response is
      * captured with the header set to `false`; a replay restores the snapshot
@@ -64,6 +68,11 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
      */
     private array $excludedResponseHeaders;
 
+    /**
+     * @var list<int>
+     */
+    private array $cacheableRedirectStatuses;
+
     private FailureClassifier $failureClassifier;
 
     /**
@@ -81,6 +90,17 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
      *                                                        list, which cannot be switched off — hiding
      *                                                        one header of your own must never re-enable
      *                                                        storing and replaying `Set-Cookie`
+     * @param list<int> $cacheableRedirectStatuses          3xx statuses cached like a success, for
+     *                                                        Post/Redirect/Get endpoints answering `303 See
+     *                                                        Other` — for such a handler the redirect IS the
+     *                                                        outcome, and a browser resubmit under the same
+     *                                                        key must replay it, not re-run the handler. Off
+     *                                                        by default: any redirect still releases the
+     *                                                        claim, so a login or access-denied redirect is
+     *                                                        never pinned to a key. Only the application
+     *                                                        knows which redirects mean "done", so it names
+     *                                                        the statuses; every value must lie in 300-399
+     *                                                        and be unique, anything else throws
      */
     public function __construct(
         private IdempotencyKeyExtractor $keyExtractor,
@@ -94,6 +114,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         private ?DomainFailureRenderer $domainFailureRenderer = null,
         ?FailureClassifier $failureClassifier = null,
         array $additionalExcludedResponseHeaders = [],
+        array $cacheableRedirectStatuses = [],
     ) {
         if ($ttlSeconds < self::MIN_TTL_SECONDS) {
             throw new \InvalidArgumentException('TTL seconds must be greater than 0');
@@ -106,6 +127,35 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             self::DEFAULT_EXCLUDED_RESPONSE_HEADERS,
             array_map(strtolower(...), $additionalExcludedResponseHeaders),
         );
+
+        $this->cacheableRedirectStatuses = $this->normalizeCacheableRedirectStatuses($cacheableRedirectStatuses);
+    }
+
+    /**
+     * Validates the opt-in redirect list: every status must be a 3xx code —
+     * the argument exists for Post/Redirect/Get redirects that mean "done",
+     * and a 2xx or 4xx/5xx value would silently change what the success and
+     * retry rules below already cover — and no status may be listed twice.
+     *
+     * @param list<int> $statuses
+     *
+     * @return list<int>
+     */
+    private function normalizeCacheableRedirectStatuses(array $statuses): array
+    {
+        foreach ($statuses as $status) {
+            if ($status < self::REDIRECT_STATUS_MIN || $status >= self::REDIRECT_STATUS_MAX_EXCLUSIVE) {
+                throw new \InvalidArgumentException(
+                    sprintf('Cacheable redirect status must be a 3xx code, got %d', $status),
+                );
+            }
+        }
+
+        if (\count($statuses) !== \count(array_unique($statuses))) {
+            throw new \InvalidArgumentException('Cacheable redirect statuses must not contain duplicates');
+        }
+
+        return $statuses;
     }
 
     #[\Override]
@@ -174,10 +224,16 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
 
         $status = $response->getStatusCode();
 
-        // Only successful (2xx) responses are cached. Anything else — redirects,
-        // client errors (incl. retryable 409/423/429), server errors — releases
-        // the claim so the request can be retried under the same key.
-        if ($status < self::SUCCESS_STATUS_MIN || $status >= self::SUCCESS_STATUS_MAX_EXCLUSIVE) {
+        // Only successful (2xx) responses are cached — plus the redirect
+        // statuses the application explicitly opted into: a Post/Redirect/Get
+        // form answers `303 See Other`, and that redirect is the outcome.
+        // Anything else — redirects not listed, client errors (incl. retryable
+        // 409/423/429), server errors — releases the claim so the request can
+        // be retried under the same key.
+        $isCacheable = ($status >= self::SUCCESS_STATUS_MIN && $status < self::SUCCESS_STATUS_MAX_EXCLUSIVE)
+            || \in_array($status, $this->cacheableRedirectStatuses, strict: true);
+
+        if (!$isCacheable) {
             $this->storage->release($key);
 
             return $response;
@@ -186,7 +242,12 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         // The header is part of the snapshot: the first caller and every
         // replay get it from the same source of truth, and the replay only
         // flips the value (see replayResponse()).
-        $response = $response->withHeader(name: self::REPLAY_HEADER, value: 'false');
+        //
+        // PSR-7 calls below are positional on purpose: parameter names are not
+        // part of the interface contract, and Nyholm\Psr7 spells them
+        // `$header`/`$value` — a named `name:` argument is a runtime Error
+        // there (#36). Our own API keeps the named-argument style.
+        $response = $response->withHeader(self::REPLAY_HEADER, 'false');
 
         try {
             [$captured, $response] = $this->captureResponse($response);
@@ -284,7 +345,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
             return null;
         }
 
-        $response = $response->withHeader(name: self::REPLAY_HEADER, value: 'false');
+        $response = $response->withHeader(self::REPLAY_HEADER, 'false');
 
         [$captured, $response] = $this->captureResponse($response);
 
@@ -374,7 +435,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         );
 
         if ($retryAfterSeconds !== null) {
-            $response = $response->withHeader(name: 'Retry-After', value: (string) $retryAfterSeconds);
+            $response = $response->withHeader('Retry-After', (string) $retryAfterSeconds);
         }
 
         return $response;
@@ -383,7 +444,7 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
     private function jsonErrorResponse(int $statusCode, string $body): ResponseInterface
     {
         $response = $this->responseFactory->createResponse($statusCode);
-        $response = $response->withHeader(name: 'Content-Type', value: 'application/json');
+        $response = $response->withHeader('Content-Type', 'application/json');
         $response->getBody()->write($body);
         $response->getBody()->rewind();
 
@@ -395,12 +456,12 @@ final readonly class IdempotencyMiddleware implements MiddlewareInterface
         $response = $this->responseFactory->createResponse($captured->statusCode);
 
         foreach ($captured->headers as $name => $values) {
-            $response = $response->withHeader(name: $name, value: $values);
+            $response = $response->withHeader($name, $values);
         }
 
         // `withHeader` replaces, so a snapshot captured with `false` (or a
         // handler that set the header itself) cannot leak into a replay.
-        $response = $response->withHeader(name: self::REPLAY_HEADER, value: 'true');
+        $response = $response->withHeader(self::REPLAY_HEADER, 'true');
 
         $response->getBody()->write($captured->body);
         $response->getBody()->rewind();

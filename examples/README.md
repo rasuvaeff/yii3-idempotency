@@ -4,6 +4,7 @@
 |---|---|---|
 | `basic.php` | Basic package bootstrap usage | No |
 | `extensions.php` | Caller and endpoint scoping, failure classification, payload dot-path keys | No |
+| `prg-form.php` | Caching Post/Redirect/Get 303 answers via `cacheableRedirectStatuses` | No |
 
 Both scripts load `vendor/autoload.php`, so a clean checkout needs dependencies
 installed first:

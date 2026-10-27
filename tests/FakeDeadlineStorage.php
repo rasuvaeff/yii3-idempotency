@@ -22,7 +22,7 @@ final class FakeDeadlineStorage implements IdempotencyStorage, ClaimedFingerprin
     public ?\DateTimeImmutable $deadline = null;
 
     public function __construct(
-        private IdempotencyStorage $delegate,
+        private readonly IdempotencyStorage $delegate,
     ) {}
 
     #[\Override]

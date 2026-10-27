@@ -86,7 +86,16 @@ make release-check
   the deadline has already passed.
 - Only 2xx handler responses are cached; any non-2xx (3xx/4xx — incl. retryable
   409/423/429 — and 5xx) releases the claim instead, so transient failures stay
-  retryable under the same key.
+  retryable under the same key. One opt-in exception: the 3xx statuses listed in
+  the `cacheableRedirectStatuses` constructor argument (default `[]`) are cached
+  and replayed exactly like a 2xx — Post/Redirect/Get endpoints answering 303;
+  every value is validated to 300-399 and uniqueness, and a redirect NOT in the
+  list (a login 302) still releases the claim.
+- **PSR-7 method calls are positional, never named.** Parameter names are not
+  part of the PSR-7 contract — Nyholm\Psr7 spells them `$header`/`$value`, and
+  PHP resolves named arguments against the concrete class, so `withHeader(name:
+  ...)` is a runtime `Error` there (#36). The package's own API keeps the
+  named-argument style; third-party interfaces with free parameter names do not.
 - Thrown failures are cached only when a `DomainFailureRenderer` is configured
   **and** the `FailureClassifier` returns `FailureKind::Domain`. The cached
   outcome is an ordinary `IdempotencyResponse` snapshot — no storage schema

@@ -83,5 +83,6 @@ return [
         ),
         ttlSeconds: (int) ($params['rasuvaeff/yii3-idempotency']['ttlSeconds'] ?? 3600),
         methods: $params['rasuvaeff/yii3-idempotency']['methods'] ?? ['POST', 'PUT', 'PATCH'],
+        cacheableRedirectStatuses: $params['rasuvaeff/yii3-idempotency']['cacheableRedirectStatuses'] ?? [],
     ),
 ];

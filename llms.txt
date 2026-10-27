@@ -14,7 +14,7 @@ composer require rasuvaeff/yii3-idempotency
 - Replay: same key + same fingerprint => cached response, handler NOT called
 - Payload mismatch: same key + different fingerprint => 422
 - In-flight duplicate: claim already taken => 409 (with `Retry-After` when the storage implements `ClaimedDeadlineProvider`); if the storage implements `ClaimedFingerprintProvider` and the in-flight claim's fingerprint differs => 422
-- Only 2xx handler responses are cached; non-2xx (3xx/4xx incl. retryable 409/423/429, and any 5xx) release the claim and stay retryable
+- Only 2xx handler responses are cached; non-2xx (3xx/4xx incl. retryable 409/423/429, and any 5xx) release the claim and stay retryable. Opt-in exception: 3xx statuses listed in `cacheableRedirectStatuses` (for Post/Redirect/Get forms answering 303) are cached and replayed like a success — a redirect not listed is never pinned to a key
 - Thrown failures: cached ONLY when a `DomainFailureRenderer` is configured AND the `FailureClassifier` returns `FailureKind::Domain`; otherwise the claim is released and the throwable is rethrown
 - Returning a 4xx response and throwing a domain exception are different paths — only the throwing path is classified
 - Caller scoping is MANDATORY: `scopeResolver` is a required constructor argument. Every key is namespaced before it reaches storage — `sha256(scope . "\0" . key)`, a fixed 64 chars. Without it one client can replay another client's cached response, and the replay path never enters the handler (so never its authorization checks)
@@ -126,6 +126,10 @@ $middleware = new IdempotencyMiddleware(
     failureClassifier: null,      // FailureClassifier|null — defaults to DefaultFailureClassifier
     additionalExcludedResponseHeaders: [], // list<string> — ADDED to the built-in deny-list
                                            // (set-cookie, date, hop-by-hop); it cannot be switched off
+    cacheableRedirectStatuses: [],         // list<int> — 3xx statuses cached like a success
+                                           // (Post/Redirect/Get: [303]); each value in 300-399, unique,
+                                           // anything else throws InvalidArgumentException. Default []
+                                           // keeps every non-2xx retryable
 );
 ```
 
