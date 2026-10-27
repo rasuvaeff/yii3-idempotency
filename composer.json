@@ -34,6 +34,7 @@
         "friendsofphp/php-cs-fixer": "^3.95",
         "infection/infection": "^0.35",
         "maglnet/composer-require-checker": "^4.17",
+        "nyholm/psr7": "^1.8",
         "rasuvaeff/property-testing-testo": "^1.0",
         "rasuvaeff/rector-named-literals": "^1.0",
         "rasuvaeff/understudy": "^1.0",

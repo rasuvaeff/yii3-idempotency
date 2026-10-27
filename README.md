@@ -61,7 +61,7 @@ $middleware = new IdempotencyMiddleware(
 | Same key + different payload while first request is still processing | 422 Unprocessable Content when the storage implements `ClaimedFingerprintProvider`, otherwise 409 Conflict |
 | Malformed key (too long, illegal characters) | 400 Bad Request |
 | Same key + same payload, different caller | Handler processes again — the two callers never share a record |
-| Non-2xx handler response (3xx/4xx/5xx) | Response NOT stored — claim released, client may retry with the same key |
+| Non-2xx handler response (3xx/4xx/5xx) | Response NOT stored — claim released, client may retry with the same key. Exception: 3xx statuses listed in `cacheableRedirectStatuses` are stored and replayed like a success |
 | Handler throws, no `DomainFailureRenderer` | Claim released, throwable rethrown — retry re-runs the handler |
 | Handler throws a domain failure, renderer configured | Rendered response stored and replayed like a success (see below) |
 | Non-configured method (e.g. `GET`, `DELETE`) | Passes through untouched — idempotency applies only to `methods` (default POST/PUT/PATCH) |
@@ -112,6 +112,38 @@ renderer nothing changes — every throwable stays retryable.
 
 Only the throwing path is classified. A handler that *returns* a 4xx response
 still releases the claim.
+
+### Post/Redirect/Get forms
+
+A server-rendered form typically answers POST with `303 See Other` — redirect
+to the page that shows the result. That redirect is the *outcome*, but by
+default it is not a 2xx, so the claim is released and a retry under the same
+key (double click, a browser resubmit after a slow network) re-runs the handler
+and writes a second record. Only the concurrent duplicate was protected.
+
+List the statuses that mean "done, look over there" to have them cached and
+replayed exactly like a success:
+
+```php
+use Rasuvaeff\Yii3Idempotency\IdempotencyMiddleware;
+
+$middleware = new IdempotencyMiddleware(
+    // ... keyExtractor, storage, responseFactory, clock, scopeResolver ...
+    cacheableRedirectStatuses: [303],
+);
+```
+
+- The stored and replayed snapshot keeps the `Location` header and the body;
+  the replay carries `Idempotency-Replay: true` like any other replay.
+- Every value must be a 3xx code and unique — anything else throws
+  `InvalidArgumentException` at construction.
+- Only what you list changes. A login redirect (302) or an access-denied
+  redirect is never pinned to a key unless you list it — deliberately, because
+  a redirect can mean either "done" or "go elsewhere first", and only the
+  application knows which.
+- `Set-Cookie`, `Date` and hop-by-hop headers stay excluded from the snapshot —
+  the built-in deny-list cannot be switched off — so a replayed redirect never
+  touches the session.
 
 ### Caller scoping
 
@@ -221,6 +253,10 @@ return [
         'policy' => 'pass_through', // or 'reject'
         'ttlSeconds' => 3600,
         'methods' => ['POST', 'PUT', 'PATCH'], // methods idempotency applies to
+        // 3xx statuses cached like a success — for Post/Redirect/Get forms
+        // answering 303. Default [] keeps the strict behaviour: any non-2xx
+        // releases the claim. Only list redirects that mean "done".
+        'cacheableRedirectStatuses' => [],
         // REQUIRED — the container refuses to build the middleware while this is null.
         // A request-attribute name: keys are namespaced by the principal found there.
         // false: every caller shares one keyspace (pre-2.0 behaviour) — see "Caller scoping".
@@ -274,7 +310,7 @@ caching on. `FailureClassifier` needs wiring only to override
 - A malformed key from an untrusted request answers 400, not 500 — a client cannot generate unhandled exceptions with one header
 - Fingerprint includes method, path, query string, and body — prevents payload substitution
 - Request body stream is rewound after fingerprinting — handlers can re-read it
-- Only 2xx responses **returned by the handler** are cached; non-2xx (incl. retryable 409/423/429 and any 5xx) release the claim, so a transient failure cannot be replayed for the whole TTL. A rendered domain failure is the one deliberate exception and is cached at whatever status the renderer chose
+- Only 2xx responses **returned by the handler** are cached; non-2xx (incl. retryable 409/423/429 and any 5xx) release the claim, so a transient failure cannot be replayed for the whole TTL. Two deliberate exceptions, both opt-in: a rendered domain failure, cached at whatever status the renderer chose, and the 3xx statuses you list in `cacheableRedirectStatuses` — a redirect you did not list is never pinned to a key
 - Thrown failures are cached only when you configure a `DomainFailureRenderer` **and** the classifier calls them `Domain`. `\Error`, anything marked `RetryableFailure`, and anything you override as `Bug` always release the claim — a transient failure still cannot be pinned for the whole TTL. Classify conservatively: a failure cached as `Domain` is replayed until the record expires
 - Scoping hashes the client key together with the scope, so a scope name is never echoed back and a long key cannot be pushed past the length limit
 - Idempotency applies only to the configured `methods` (default POST/PUT/PATCH) — safe methods pass through

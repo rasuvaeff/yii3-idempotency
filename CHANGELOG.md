@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.3.0 — 2026-10-27
+
+- New optional `cacheableRedirectStatuses` constructor argument (and
+  `config/params.php` key of the same name) for `IdempotencyMiddleware`:
+  3xx statuses to cache like a success, for Post/Redirect/Get endpoints
+  answering `303 See Other`. For such a handler the redirect is the outcome,
+  but until now it released the claim — a retry after the first request
+  finished (double click, browser resubmit) re-ran the handler and wrote a
+  second record. Off by default (`[]`): only the statuses the application
+  lists are stored and replayed, exactly like a 2xx (same record, TTL,
+  `Idempotency-Replay` header, `Location` kept in the snapshot); every other
+  redirect — a login (302) or access-denied one — still releases the claim.
+  Values are validated to the 3xx range and uniqueness; `Set-Cookie`, `Date`
+  and hop-by-hop headers stay excluded from the snapshot. No storage change:
+  `IdempotencyStorage` implementations need nothing (#35).
+- Fixed a crash on PSR-7 implementations that spell `withHeader()` parameters
+  `$header`/`$value` (Nyholm\Psr7 above all): the middleware mutated messages
+  with named `name:`/`value:` arguments, which PHP resolves against the
+  concrete class — an `Error: Unknown named parameter $name` on every request
+  that reached the caching or JSON error path. All PSR-7 calls are positional
+  now; parameter names are not part of the PSR-7 contract (#36).
+
 ## 2.2.0 — 2026-10-26
 
 - New optional `ClaimedDeadlineProvider` capability for `IdempotencyStorage`

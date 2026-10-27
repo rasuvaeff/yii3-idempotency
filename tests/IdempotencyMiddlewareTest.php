@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\Yii3Idempotency\Tests;
 
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Nyholm\Psr7\Response;
+use Nyholm\Psr7\ServerRequest;
+use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Rasuvaeff\PropertyTesting\ArbitraryInterface;
@@ -30,6 +34,7 @@ use Rasuvaeff\Yii3Idempotency\RequestTargetScopeResolver;
 use Rasuvaeff\Yii3Idempotency\SharedKeyspaceScopeResolver;
 use Testo\Assert;
 use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
 use Testo\Lifecycle\BeforeTest;
 use Testo\Test;
 
@@ -329,6 +334,265 @@ final class IdempotencyMiddlewareTest
         Assert::same($handler->getCallCount(), 2);
     }
 
+    /**
+     * A Post/Redirect/Get form answers `303 See Other` — with the status
+     * opted in, the redirect IS the outcome: stored on the first request,
+     * replayed byte-for-byte (same `Location`, `Idempotency-Replay: true`)
+     * on the retry, and the handler never runs twice.
+     */
+    public function optInRedirectIsStoredAndReplayed(): void
+    {
+        $middleware = $this->middlewareWithCacheableRedirects(303);
+        $handler = new FakeHandler(
+            responseStatus: 303,
+            responseBody: '',
+            responseHeaders: ['Location' => '/guestbook?page=3'],
+        );
+
+        $first = $middleware->process($this->keyedRequest(), $handler);
+        $replay = $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($first->getStatusCode(), 303);
+        Assert::same($first->getHeaderLine('Location'), '/guestbook?page=3');
+        Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false');
+        Assert::same($replay->getStatusCode(), 303);
+        Assert::same($replay->getHeaderLine('Location'), '/guestbook?page=3');
+        Assert::same($replay->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::same($handler->getCallCount(), 1);
+    }
+
+    /**
+     * Regression for today's behaviour: without the argument a 303 releases
+     * the claim, so a browser resubmit after the first request finished
+     * re-runs the handler.
+     */
+    public function withoutTheArgumentARedirectIsStillReleased(): void
+    {
+        $handler = new FakeHandler(responseStatus: 303, responseBody: '', responseHeaders: ['Location' => '/done']);
+
+        $this->middleware->process($this->keyedRequest(), $handler);
+        $this->middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($handler->getCallCount(), 2);
+    }
+
+    /**
+     * Only the listed statuses change: a 302 (a login or access-denied
+     * redirect) stays retryable even when 303 is opted in.
+     */
+    public function redirectNotInTheListIsReleased(): void
+    {
+        $middleware = $this->middlewareWithCacheableRedirects(303);
+        $handler = new FakeHandler(responseStatus: 302, responseBody: '', responseHeaders: ['Location' => '/login']);
+
+        $first = $middleware->process($this->keyedRequest(), $handler);
+        $second = $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($first->getStatusCode(), 302);
+        Assert::same($second->getStatusCode(), 302);
+        Assert::same($handler->getCallCount(), 2);
+    }
+
+    public function payloadMismatchUnderAnOptInRedirectIsStillUnprocessable(): void
+    {
+        $middleware = $this->middlewareWithCacheableRedirects(303);
+        $handler = new FakeHandler(responseStatus: 303, responseBody: '', responseHeaders: ['Location' => '/done']);
+
+        $middleware->process($this->keyedRequest('{"a":1}'), $handler);
+        $response = $middleware->process($this->keyedRequest('{"a":2}'), $handler);
+
+        Assert::same($response->getStatusCode(), 422);
+    }
+
+    public function inFlightConflictIsUnchangedForOptInRedirects(): void
+    {
+        $middleware = $this->middlewareWithCacheableRedirects(303);
+        $request = $this->keyedRequest();
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $handler = new FakeHandler(responseStatus: 303);
+        $response = $middleware->process($request, $handler);
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($handler->getCallCount(), 0);
+    }
+
+    /**
+     * The always-on deny-list applies to an opted-in redirect exactly as it
+     * does to a success: `Set-Cookie` never reaches the snapshot, so a replay
+     * cannot touch the session.
+     */
+    public function setCookieIsNotCapturedFromAnOptInRedirect(): void
+    {
+        $middleware = $this->middlewareWithCacheableRedirects(303);
+        $handler = new FakeHandler(
+            responseStatus: 303,
+            responseBody: '',
+            responseHeaders: [
+                'Set-Cookie' => 'PHPSESSID=secret',
+                'Location' => '/done',
+            ],
+        );
+
+        $first = $middleware->process($this->keyedRequest(), $handler);
+        $replay = $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($first->getHeader('Set-Cookie'), ['PHPSESSID=secret']);
+        Assert::same($replay->getHeader('Set-Cookie'), []);
+        Assert::same($replay->getHeaderLine('Location'), '/done');
+    }
+
+    #[DataProvider('rejectsRedirectStatusesOutsideThe3xxRangeProvider')]
+    public function rejectsRedirectStatusesOutsideThe3xxRange(int $status): void
+    {
+        try {
+            $this->middlewareWithCacheableRedirects($status);
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            Assert::true(actual: true);
+        }
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function rejectsRedirectStatusesOutsideThe3xxRangeProvider(): iterable
+    {
+        yield 'success status' => [200];
+        yield 'just below the range' => [299];
+        yield 'client error' => [400];
+        yield 'server error' => [500];
+    }
+
+    public function rejectsDuplicateRedirectStatuses(): void
+    {
+        try {
+            $this->middlewareWithCacheableRedirects(303, 303);
+            Assert::fail('Expected \InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            Assert::true(actual: true);
+        }
+    }
+
+    public function acceptsBoth3xxBoundaries(): void
+    {
+        Assert::instanceOf(
+            $this->middlewareWithCacheableRedirects(300, 399),
+            MiddlewareInterface::class,
+        );
+    }
+
+    /**
+     * Regression for #36: PSR-7 parameter names are not part of the contract
+     * (Nyholm spells them `$header`/`$value`), so every message mutation must
+     * be positional — a named `name:` argument is a runtime Error on Nyholm.
+     * Drives first execution, replay and the JSON error path against
+     * nyholm/psr7 request and response objects.
+     */
+    public function worksWithAnAlternativePsr7Implementation(): void
+    {
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new Psr17Factory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+            cacheableRedirectStatuses: [303],
+        );
+        $handler = new class implements RequestHandlerInterface {
+            public int $calls = 0;
+
+            #[\Override]
+            public function handle(\Psr\Http\Message\ServerRequestInterface $request): ResponseInterface
+            {
+                $this->calls++;
+
+                return (new Response(303))->withHeader('Location', '/guestbook?page=1');
+            }
+        };
+
+        $request = new ServerRequest('POST', '/guestbook', ['Idempotency-Key' => ['key-1']], 'message=hello');
+        $first = $middleware->process($request, $handler);
+        $replay = $middleware->process($request, $handler);
+        $mismatch = $middleware->process(
+            new ServerRequest('POST', '/guestbook', ['Idempotency-Key' => ['key-1']], 'message=other'),
+            $handler,
+        );
+
+        Assert::same($first->getStatusCode(), 303);
+        Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false');
+        Assert::same($replay->getStatusCode(), 303);
+        Assert::same($replay->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::same($replay->getHeaderLine('Location'), '/guestbook?page=1');
+        Assert::same($mismatch->getStatusCode(), 422);
+        Assert::same($handler->calls, 1);
+    }
+
+    /**
+     * The opt-in only ever adds statuses to the cacheable set: for a 2xx
+     * outcome the middleware behaves exactly the same with and without it.
+     */
+    #[Property(runs: 200)]
+    public function twoXxOutcomeIsIdenticalWithAndWithoutTheOptIn(int $statusCode, string $body): void
+    {
+        $plain = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+        $optIn = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: new InMemoryIdempotencyStorage($this->clock),
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+            cacheableRedirectStatuses: [303],
+        );
+        $plainHandler = new FakeHandler(responseStatus: $statusCode, responseBody: $body);
+        $optInHandler = new FakeHandler(responseStatus: $statusCode, responseBody: $body);
+
+        $plainFirst = $plain->process($this->keyedRequest(), $plainHandler);
+        $plainReplay = $plain->process($this->keyedRequest(), $plainHandler);
+        $optInFirst = $optIn->process($this->keyedRequest(), $optInHandler);
+        $optInReplay = $optIn->process($this->keyedRequest(), $optInHandler);
+
+        Assert::same($optInFirst->getStatusCode(), $plainFirst->getStatusCode());
+        Assert::same((string) $optInFirst->getBody(), (string) $plainFirst->getBody());
+        Assert::same($optInFirst->getHeaderLine('Idempotency-Replay'), $plainFirst->getHeaderLine('Idempotency-Replay'));
+        Assert::same($optInReplay->getStatusCode(), $plainReplay->getStatusCode());
+        Assert::same((string) $optInReplay->getBody(), (string) $plainReplay->getBody());
+        Assert::same($optInReplay->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::same($plainReplay->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::same($optInHandler->getCallCount(), $plainHandler->getCallCount());
+        Assert::same($plainHandler->getCallCount(), 1);
+    }
+
+    /**
+     * @return array<string, ArbitraryInterface>
+     */
+    public static function twoXxOutcomeIsIdenticalWithAndWithoutTheOptInGenerators(): array
+    {
+        return [
+            'statusCode' => Gen::intBetween(200, 299),
+            'body' => Gen::stringAscii(),
+        ];
+    }
+
+    /**
+     * @return iterable<string, array{int, string}>
+     */
+    public static function twoXxOutcomeIsIdenticalWithAndWithoutTheOptInExamples(): iterable
+    {
+        yield 'lower boundary' => [200, 'ok'];
+        yield 'upper boundary' => [299, 'still a success'];
+    }
+
     public function differentPayloadWithSameKeyReturnsUnprocessable(): void
     {
         $request1 = new FakeRequest(
@@ -508,7 +772,7 @@ final class IdempotencyMiddlewareTest
 
         $response = $this->middleware->process($request, new FakeHandler(responseStatus: 503));
 
-        Assert::same($response->hasHeader('Idempotency-Replay'), false);
+        Assert::same($response->hasHeader('Idempotency-Replay'), expected: false);
     }
 
     public function notExpiredJustBeforeTtl(): void
@@ -633,7 +897,7 @@ final class IdempotencyMiddlewareTest
         $response = $middleware->process($request, new FakeHandler());
 
         Assert::same($response->getStatusCode(), 409);
-        Assert::same($response->hasHeader('Retry-After'), false);
+        Assert::same($response->hasHeader('Retry-After'), expected: false);
     }
 
     public function claimConflictWithoutTheDeadlineCapabilityKeepsTheBareConflict(): void
@@ -652,7 +916,7 @@ final class IdempotencyMiddlewareTest
         $response = $this->middleware->process($request, new FakeHandler());
 
         Assert::same($response->getStatusCode(), 409);
-        Assert::same($response->hasHeader('Retry-After'), false);
+        Assert::same($response->hasHeader('Retry-After'), expected: false);
     }
 
     public function payloadMismatchConflictCarriesNoRetryAfter(): void
@@ -688,7 +952,7 @@ final class IdempotencyMiddlewareTest
         $response = $middleware->process($second, new FakeHandler());
 
         Assert::same($response->getStatusCode(), 422);
-        Assert::same($response->hasHeader('Retry-After'), false);
+        Assert::same($response->hasHeader('Retry-After'), expected: false);
     }
 
     public function claimedKeyWithDifferentPayloadReturnsUnprocessableWhileInFlight(): void
@@ -1498,6 +1762,19 @@ final class IdempotencyMiddlewareTest
             path: '/api/payments',
             body: $body,
             headers: ['idempotency-key' => ['key-1']],
+        );
+    }
+
+    private function middlewareWithCacheableRedirects(int ...$statuses): IdempotencyMiddleware
+    {
+        return new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $this->storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+            ttlSeconds: 3600,
+            cacheableRedirectStatuses: array_values($statuses),
         );
     }
 }

@@ -8,6 +8,11 @@ return [
         'policy' => 'pass_through',
         'ttlSeconds' => 3600,
         'methods' => ['POST', 'PUT', 'PATCH'],
+        // 3xx statuses cached like a success — for Post/Redirect/Get forms
+        // answering 303. Default [] keeps the strict behaviour: any non-2xx
+        // releases the claim. Only list redirects that mean "done"; a login
+        // redirect (302) must stay retryable.
+        'cacheableRedirectStatuses' => [],
         // REQUIRED — the container refuses to build the middleware while this is null.
         // A request-attribute name (for example 'user'): keys are namespaced by the
         // authenticated principal found there, so one client can never replay another
