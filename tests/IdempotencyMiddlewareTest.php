@@ -900,6 +900,76 @@ final class IdempotencyMiddlewareTest
         Assert::same($response->hasHeader('Retry-After'), expected: false);
     }
 
+    public function claimConflictOmitsRetryAfterWhenTheDeadlineIsNow(): void
+    {
+        $storage = new FakeDeadlineStorage($this->storage);
+        $storage->deadline = $this->clock->now();
+
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $response = $middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($response->hasHeader('Retry-After'), expected: false);
+    }
+
+    public function claimConflictOmitsRetryAfterWhenTheCapabilityKnowsNoDeadline(): void
+    {
+        $storage = new FakeDeadlineStorage($this->storage);
+
+        $middleware = new IdempotencyMiddleware(
+            keyExtractor: $this->extractor,
+            storage: $storage,
+            responseFactory: new FakeResponseFactory(),
+            clock: $this->clock,
+            scopeResolver: new SharedKeyspaceScopeResolver(),
+        );
+
+        $request = new FakeRequest(
+            method: 'POST',
+            body: '{"a":1}',
+            headers: ['idempotency-key' => ['key-1']],
+        );
+
+        $this->storage->claim(
+            $this->storageKey('key-1'),
+            IdempotencyFingerprint::fromRequest($request),
+        );
+
+        $response = $middleware->process($request, new FakeHandler());
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($response->hasHeader('Retry-After'), expected: false);
+    }
+
+    public function everyListedRedirectStatusIsCached(): void
+    {
+        $middleware = $this->middlewareWithCacheableRedirects(301, 303);
+        $handler = new FakeHandler(responseStatus: 303, responseBody: 'see other');
+
+        $middleware->process($this->keyedRequest(), $handler);
+        $middleware->process($this->keyedRequest(), $handler);
+
+        Assert::same($handler->getCallCount(), 1);
+    }
+
     public function claimConflictWithoutTheDeadlineCapabilityKeepsTheBareConflict(): void
     {
         $request = new FakeRequest(
