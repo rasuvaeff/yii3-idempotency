@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Mutation testing now counts code the tests execute but do not name in `#[Covers]`
+  (`composer mutation` runs Infection with `--with-uncovered`, plus the signature-default
+  ignore and the visibility mutators switched off as in the package template). Added
+  `BufferedStreamTest` and middleware tests for the `Retry-After` boundary, an unknown
+  claim deadline and several cacheable redirect statuses. No behaviour change.
+
 ## 2.3.0 — 2026-10-27
 
 - New optional `cacheableRedirectStatuses` constructor argument (and
