@@ -16,7 +16,7 @@ Idempotency key middleware for Yii3 APIs. Prevents duplicate processing of POST/
 
 ## Requirements
 
-- PHP 8.3+
+- PHP 8.3 – 8.6
 - `psr/clock` ^1.0
 - `psr/http-message` ^2.0
 - `psr/http-server-middleware` ^1.0

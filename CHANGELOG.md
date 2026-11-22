@@ -7,6 +7,9 @@
   ignore and the visibility mutators switched off as in the package template). Added
   `BufferedStreamTest` and middleware tests for the `Retry-After` boundary, an unknown
   claim deadline and several cacheable redirect statuses. No behaviour change.
+- **Changed:** PHP 8.6 is supported: the `php` constraint is widened to
+  `8.3 - 8.6` (#40). CI runs PHP 8.6 as a regular matrix entry; the
+  backward-compatibility job runs on PHP 8.5.
 
 ## 2.3.0 — 2026-10-27
 
