@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.1 — 2026-11-22
 
 - Mutation testing now counts code the tests execute but do not name in `#[Covers]`
   (`composer mutation` runs Infection with `--with-uncovered`, plus the signature-default
