@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.2 — 2026-11-27
+
+- Docs: the agent skill documents `cacheableRedirectStatuses` (cached 3xx) and the in-flight 422 when the storage implements `ClaimedFingerprintProvider`.
+
 ## 2.3.1 — 2026-11-22
 
 - Mutation testing now counts code the tests execute but do not name in `#[Covers]`

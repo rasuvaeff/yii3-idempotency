@@ -23,8 +23,10 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
    (default POST/PUT/PATCH, case-insensitive). GET/DELETE and anything else
    pass through before any key or claim work — do not expect them to dedupe.
 
-2. **Only 2xx responses are cached.** Any non-2xx handler response (3xx/4xx —
-   including retryable 409/423/429 — and any 5xx) releases the claim so the
+2. **Only 2xx responses are cached**, plus 3xx statuses opted into via
+   `cacheableRedirectStatuses` (e.g. `[303]` for Post/Redirect/Get; default `[]`).
+   Any other handler response (unlisted 3xx, 4xx — including retryable
+   409/423/429 — and any 5xx) releases the claim so the
    client can retry under the same key. Never "fix" a failing retry by caching
    an error response.
 
@@ -39,8 +41,10 @@ under its `Idempotency-Key` header and replays it on retries. Namespace
    failure mislabelled `Domain` is pinned until the record expires.
 
 3. **Conflict semantics are fixed contract.** Same key + different payload
-   fingerprint → 422; same key while the first request is still in flight
-   → 409; replay (same key + same fingerprint) → cached response, handler NOT
+   fingerprint → 422; same key + same payload while the first request is still
+   in flight → 409 (with `Retry-After` when the storage can name the claim's
+   deadline); a different payload while in flight → 422 when the storage
+   implements `ClaimedFingerprintProvider`, else 409; replay (same key + same fingerprint) → cached response, handler NOT
    called. Key format: 1-255 chars, `[A-Za-z0-9._-]+`.
 
    A malformed key (too long, illegal characters) coming off the request is a
@@ -95,7 +99,7 @@ $middleware = new IdempotencyMiddleware(
 
 With the Yii3 config plugin, tune via `params.php` under
 `'rasuvaeff/yii3-idempotency'` (`headerName`, `policy`, `ttlSeconds`,
-`methods`, `callerAttribute`, `anonymousCaller`, `scope`). `callerAttribute` is
+`methods`, `cacheableRedirectStatuses`, `callerAttribute`, `anonymousCaller`, `scope`). `callerAttribute` is
 required — a request-attribute name, or `false` for the shared-keyspace
 opt-out. `scope` accepts `'auto'` (`RequestTargetScopeResolver`), `null` (no
 endpoint dimension) or an explicit scope name.
